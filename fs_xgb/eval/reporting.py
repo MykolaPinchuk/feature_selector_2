@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Dict, Iterable, List
 
 import pandas as pd
 
@@ -72,10 +73,16 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
     timestamp = result.run_dir.name
     primary_mode = result.primary_mode
     primary = result.mode_results[primary_mode]
+    xgb_params = config.get("xgb_final_params", {})
+    hyperparam_summary = ", ".join(f"{k}={v}" for k, v in sorted(xgb_params.items())) or "Default XGBoost parameters"
     lines = [
         f"# Feature Selection Report – {dataset}",
         f"- Run timestamp: `{timestamp}`",
         f"- Results directory: `{result.run_dir}`",
+        f"- Final model hyperparameters: {hyperparam_summary}",
+        "",
+        "## Mode Summary (thresholds & performance)",
+        build_mode_summary_table(result, config),
         "",
         "## Model Performance",
         build_metrics_table(primary.models),
@@ -92,9 +99,13 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         lines.append("## Additional Feature-Selection Modes")
     for mode_name in other_modes:
         mode_result = result.mode_results[mode_name]
+        lines.append(f"### Mode: {mode_name}")
+        if mode_result.identical_to_primary:
+            lines.append("_Identical to primary mode results; no additional files generated._")
+            lines.append("")
+            continue
         lines.extend(
             [
-                f"### Mode: {mode_name}",
                 "#### Feature Set",
                 build_feature_list_table(mode_result.fs_result),
                 "",
@@ -123,6 +134,65 @@ def write_experiment_report(result: ExperimentResult, config: dict) -> Path:
     report_path = result.run_dir / "report.md"
     report_path.write_text(markdown, encoding="utf-8")
     return report_path
+
+
+def _deep_merge(base: Dict, updates: Dict) -> Dict:
+    merged = copy.deepcopy(base)
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _resolve_mode_configs(config: dict) -> Dict[str, Dict]:
+    base = copy.deepcopy(config.get("fs", {}))
+    modes_cfg = config.get("fs_modes")
+    if not modes_cfg:
+        return {"moderate": base}
+    resolved = {}
+    for name, overrides in modes_cfg.items():
+        resolved[name] = _deep_merge(base, overrides or {})
+    return resolved
+
+
+def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
+    mode_configs = _resolve_mode_configs(config)
+    rows = []
+    for mode_name, mode_result in result.mode_results.items():
+        cfg = mode_configs.get(mode_name, {})
+        thresholds = cfg.get("thresholds", {})
+        rest_policy = cfg.get("rest_policy", config.get("fs", {}).get("rest_policy", "keep_all"))
+        fs_filtered = next((m for m in mode_result.models if m.name == "fs_filtered"), None)
+        train_pr = fs_filtered.metrics["train"]["pr_auc"] if fs_filtered else float("nan")
+        val_pr = fs_filtered.metrics["val"]["pr_auc"] if fs_filtered else float("nan")
+        test_pr = fs_filtered.metrics["test"]["pr_auc"] if fs_filtered else float("nan")
+        rows.append(
+            [
+                f"{mode_name} {'(primary)' if mode_name == result.primary_mode else ''}".strip(),
+                len(mode_result.fs_result.kept_features),
+                len(mode_result.fs_result.dropped_features),
+                thresholds.get("delta_abs_min", "n/a"),
+                thresholds.get("k_noise_std", "n/a"),
+                rest_policy,
+                _format_float(train_pr),
+                _format_float(val_pr),
+                _format_float(test_pr),
+            ]
+        )
+    headers = [
+        "Mode",
+        "Kept",
+        "Dropped",
+        "ΔPR min",
+        "k_noise_std",
+        "Rest policy",
+        "Train PR-AUC",
+        "Val PR-AUC",
+        "Test PR-AUC",
+    ]
+    return _markdown_table(headers, rows)
 
 
 def generate_eda_report_markdown(dataset: str, X: pd.DataFrame, y: pd.Series, metadata: dict) -> str:

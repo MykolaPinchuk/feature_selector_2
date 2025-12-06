@@ -67,6 +67,35 @@ def _build_fs_mode_configs(config: Dict) -> Dict[str, Dict]:
     return mode_configs
 
 
+def _models_equal(models_a: List[ModelResult], models_b: List[ModelResult]) -> bool:
+    if len(models_a) != len(models_b):
+        return False
+    for model_a, model_b in zip(models_a, models_b):
+        if model_a.name != model_b.name:
+            return False
+        if model_a.feature_names != model_b.feature_names:
+            return False
+        if model_a.selected != model_b.selected:
+            return False
+        if model_a.metrics != model_b.metrics:
+            return False
+    return True
+
+
+def _mode_results_equal(mode_a: ModeResult, mode_b: ModeResult) -> bool:
+    fs_a = mode_a.fs_result
+    fs_b = mode_b.fs_result
+    if fs_a.kept_features != fs_b.kept_features:
+        return False
+    if fs_a.dropped_features != fs_b.dropped_features:
+        return False
+    if not fs_a.permutation_table.equals(fs_b.permutation_table):
+        return False
+    if not fs_a.shap_importance.equals(fs_b.shap_importance):
+        return False
+    return _models_equal(mode_a.models, mode_b.models)
+
+
 def _evaluate_model(model, X_dict: Dict[str, pd.DataFrame], y_dict: Dict[str, pd.Series]) -> Dict[str, Dict[str, float]]:
     metrics = {}
     for split in ["train", "val", "test"]:
@@ -140,6 +169,8 @@ def _persist_results(
         yaml.safe_dump(config, fh)
 
     for mode_name, mode_result in mode_results.items():
+        if mode_name != primary_mode and mode_result.identical_to_primary:
+            continue
         suffix = "" if mode_name == primary_mode else f"_{mode_name}"
         mode_result.fs_result.permutation_table.to_csv(
             run_dir / f"permutation_fi{suffix}.csv", index=False
@@ -204,6 +235,11 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
     primary_mode = config.get("fs_primary_mode", "moderate")
     if primary_mode not in mode_results:
         primary_mode = next(iter(mode_results.keys()))
+    primary_result = mode_results[primary_mode]
+    for mode_name, mode_result in mode_results.items():
+        if mode_name == primary_mode:
+            continue
+        mode_result.identical_to_primary = _mode_results_equal(primary_result, mode_result)
 
     run_dir = _persist_results(dataset_name, config, mode_results, primary_mode, results_root)
     experiment_result = ExperimentResult(

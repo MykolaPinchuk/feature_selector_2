@@ -21,6 +21,7 @@ class ModelResult:
 class ModeResult:
     fs_result: FeatureSelectionResult
     models: List[ModelResult]
+    identical_to_primary: bool = False
 
 
 @dataclass

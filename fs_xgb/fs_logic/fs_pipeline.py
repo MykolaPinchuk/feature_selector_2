@@ -123,6 +123,12 @@ def _apply_selection_rules(fi_table: pd.DataFrame, shap_importance: pd.Series, c
 
     keep = sorted(dict.fromkeys(keep))
     drop = [feat for feat in shap_importance.index if feat not in keep]
+
+    if config.get("drop_negative_features", True):
+        negative_features = fi_table[fi_table["delta_mean"] <= 0]["feature"].tolist()
+        drop = sorted(set(drop).union(negative_features))
+        keep = [feat for feat in keep if feat not in drop]
+
     return keep, drop
 
 

@@ -21,6 +21,7 @@ fs:
     delta_abs_min: 0.001
     k_noise_std: 2.0
   rest_policy: "keep_all"
+  drop_negative_features: true
 
 fs_modes:
   aggressive:
@@ -28,16 +29,19 @@ fs_modes:
       delta_abs_min: 0.004
       k_noise_std: 1.0
     rest_policy: "drop_all"
+    drop_negative_features: true
   moderate:
     thresholds:
       delta_abs_min: 0.0025
       k_noise_std: 1.8
     rest_policy: "keep_all"
+    drop_negative_features: true
   mild:
     thresholds:
       delta_abs_min: 0.0005
       k_noise_std: 2.5
     rest_policy: "keep_all"
+    drop_negative_features: false
 
 fs_primary_mode: "moderate"
 
