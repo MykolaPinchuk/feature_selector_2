@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import itertools
+import math
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import copy
 import pandas as pd
@@ -13,7 +15,13 @@ import yaml
 
 from fs_xgb.data import load_dataset
 from fs_xgb.eval.reporting import write_eda_report, write_experiment_report
-from fs_xgb.fs_logic import FeatureSelectionResult, run_feature_selection
+from fs_xgb.fs_logic import (
+    FeatureImportanceArtifacts,
+    FeatureSelectionResult,
+    build_fs_result_from_artifacts,
+    compute_fs_artifacts,
+    run_feature_selection,
+)
 from fs_xgb.metrics import compute_classification_metrics
 from fs_xgb.models import predict_proba, train_xgb_classifier
 from fs_xgb.preprocessing import FeatureEngineer, FeatureEngineerConfig, TargetEncodingConfig
@@ -67,6 +75,26 @@ def _build_fs_mode_configs(config: Dict) -> Dict[str, Dict]:
     return mode_configs
 
 
+def _frontier_param_grid(base_fs_config: Dict, frontier_cfg: Dict) -> List[Dict]:
+    thresholds = base_fs_config.get("thresholds", {})
+    delta_values = frontier_cfg.get("delta_abs_min_values") or [thresholds.get("delta_abs_min", 0.0)]
+    k_values = frontier_cfg.get("k_noise_std_values") or [thresholds.get("k_noise_std", 1.0)]
+    rest_policies = frontier_cfg.get("rest_policies") or [base_fs_config.get("rest_policy", "keep_all")]
+    drop_options = frontier_cfg.get("drop_negative_options")
+    if drop_options is None:
+        drop_options = [base_fs_config.get("drop_negative_features", True)]
+    grid = []
+    for delta, k_noise, rest_policy, drop_neg in itertools.product(delta_values, k_values, rest_policies, drop_options):
+        grid.append(
+            {
+                "thresholds": {"delta_abs_min": delta, "k_noise_std": k_noise},
+                "rest_policy": rest_policy,
+                "drop_negative_features": drop_neg,
+            }
+        )
+    return grid
+
+
 def _models_equal(models_a: List[ModelResult], models_b: List[ModelResult]) -> bool:
     if len(models_a) != len(models_b):
         return False
@@ -110,14 +138,15 @@ def _train_and_eval_models(
     X_splits: Dict[str, pd.DataFrame],
     y_splits: Dict[str, pd.Series],
     fs_result: FeatureSelectionResult,
+    include_all_features: bool = True,
 ) -> List[ModelResult]:
     params = config.get("xgb_final_params", {})
     selection_cfg = config.get("selection", {})
     tolerance = selection_cfg.get("val_tolerance_relative", 0.01)
-    feature_sets = [
-        ("all_features", list(X_splits["train"].columns)),
-        ("fs_filtered", fs_result.kept_features),
-    ]
+    feature_sets = []
+    if include_all_features:
+        feature_sets.append(("all_features", list(X_splits["train"].columns)))
+    feature_sets.append(("fs_filtered", fs_result.kept_features))
 
     models = []
     val_scores = []
@@ -160,6 +189,7 @@ def _persist_results(
     mode_results: Dict[str, ModeResult],
     primary_mode: str,
     results_root: Path,
+    frontier_log: Optional[List[Dict]] = None,
 ) -> Path:
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     run_dir = results_root / dataset / timestamp
@@ -194,7 +224,154 @@ def _persist_results(
                 indent=2,
             )
 
+    if frontier_log:
+        with (run_dir / "frontier_candidates.json").open("w", encoding="utf-8") as fh:
+            json.dump(frontier_log, fh, indent=2)
+
     return run_dir
+
+
+def _run_profile_modes(
+    config: Dict,
+    X_splits: Dict[str, pd.DataFrame],
+    y_splits: Dict[str, pd.Series],
+    split_config: RandomSplitConfig,
+) -> Tuple[Dict[str, ModeResult], str, Optional[List[Dict]]]:
+    mode_configs = _build_fs_mode_configs(config)
+    mode_results: Dict[str, ModeResult] = {}
+    for mode_name, fs_mode_cfg in mode_configs.items():
+        fs_config = copy.deepcopy(fs_mode_cfg)
+        fs_config["xgb_fs_params"] = dict(config.get("xgb_fs_params", {}))
+        fs_result = run_feature_selection(
+            X_splits["train"], y_splits["train"], fs_config, random_state=split_config.random_state
+        )
+        model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
+        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=model_results)
+
+    primary_mode = config.get("fs_primary_mode", "moderate")
+    if primary_mode not in mode_results:
+        primary_mode = next(iter(mode_results.keys()))
+    primary_result = mode_results[primary_mode]
+    for mode_name, mode_result in mode_results.items():
+        if mode_name == primary_mode:
+            continue
+        mode_result.identical_to_primary = _mode_results_equal(primary_result, mode_result)
+    return mode_results, primary_mode, None
+
+
+def _select_frontier_primary(mode_results: Dict[str, ModeResult], selection_cfg: Dict) -> str:
+    tolerance = selection_cfg.get("val_tolerance_relative", 0.01)
+    ranked = []
+    for mode_name, mode_result in mode_results.items():
+        fs_model = next((m for m in mode_result.models if m.name == "fs_filtered"), None)
+        if not fs_model:
+            continue
+        val_score = fs_model.metrics["val"]["pr_auc"]
+        train_score = fs_model.metrics["train"]["pr_auc"]
+        gap = train_score - val_score
+        if math.isnan(gap):
+            gap = float("inf")
+        ranked.append(
+            {
+                "mode": mode_name,
+                "val": val_score,
+                "gap": gap,
+                "feature_count": len(fs_model.feature_names),
+            }
+        )
+    if not ranked:
+        raise ValueError("No candidate FS models evaluated during frontier search.")
+    best_val = max(row["val"] for row in ranked)
+    cutoff = (1 - tolerance) * best_val
+    eligible = [row for row in ranked if row["val"] >= cutoff]
+    eligible.sort(key=lambda row: (row["feature_count"], row["gap"], -row["val"], row["mode"]))
+    return eligible[0]["mode"]
+
+
+def _run_frontier_mode(
+    config: Dict,
+    X_splits: Dict[str, pd.DataFrame],
+    y_splits: Dict[str, pd.Series],
+    split_config: RandomSplitConfig,
+) -> Tuple[Dict[str, ModeResult], str, List[Dict]]:
+    base_fs_config = copy.deepcopy(config.get("fs", {}))
+    base_fs_config["xgb_fs_params"] = dict(config.get("xgb_fs_params", {}))
+    artifacts = compute_fs_artifacts(
+        X_splits["train"], y_splits["train"], base_fs_config, random_state=split_config.random_state
+    )
+    frontier_cfg = config.get("fs_search", {}).get("frontier", {})
+    grid = _frontier_param_grid(base_fs_config, frontier_cfg)
+    max_candidates = frontier_cfg.get("max_candidates")
+    if not max_candidates or max_candidates <= 0:
+        max_candidates = len(grid) or 1
+    feature_to_mode: Dict[Tuple[str, ...], str] = {}
+    mode_results: Dict[str, ModeResult] = {}
+    frontier_log: List[Dict] = []
+
+    for idx, candidate_cfg in enumerate(grid, start=1):
+        fs_config = copy.deepcopy(base_fs_config)
+        fs_config.setdefault("thresholds", {})
+        fs_config["thresholds"]["delta_abs_min"] = candidate_cfg["thresholds"]["delta_abs_min"]
+        fs_config["thresholds"]["k_noise_std"] = candidate_cfg["thresholds"]["k_noise_std"]
+        fs_config["rest_policy"] = candidate_cfg["rest_policy"]
+        fs_config["drop_negative_features"] = candidate_cfg["drop_negative_features"]
+        fs_result = build_fs_result_from_artifacts(artifacts, fs_config, list(X_splits["train"].columns))
+        feature_key = tuple(fs_result.kept_features)
+        metadata = {
+            "delta_abs_min": fs_config["thresholds"]["delta_abs_min"],
+            "k_noise_std": fs_config["thresholds"]["k_noise_std"],
+            "rest_policy": fs_config.get("rest_policy", "keep_all"),
+            "drop_negative_features": fs_config.get("drop_negative_features", True),
+            "kept_features": len(fs_result.kept_features),
+            "dropped_features": len(fs_result.dropped_features),
+        }
+        if feature_key in feature_to_mode:
+            candidate_entry = {
+                "candidate_index": idx,
+                "mode": feature_to_mode[feature_key],
+                **metadata,
+                "is_duplicate": True,
+                "skipped_due_to_limit": False,
+                "fs_filtered_metrics": None,
+            }
+            frontier_log.append(candidate_entry)
+            continue
+        if len(mode_results) >= max_candidates:
+            frontier_log.append(
+                {
+                    "candidate_index": idx,
+                    "mode": None,
+                    **metadata,
+                    "is_duplicate": False,
+                    "skipped_due_to_limit": True,
+                    "fs_filtered_metrics": None,
+                }
+            )
+            continue
+        models = _train_and_eval_models(config, X_splits, y_splits, fs_result)
+        mode_name = f"frontier_{len(mode_results) + 1}"
+        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=models, metadata=metadata)
+        feature_to_mode[feature_key] = mode_name
+        fs_model = next((m for m in models if m.name == "fs_filtered"), None)
+        frontier_log.append(
+            {
+                "candidate_index": idx,
+                "mode": mode_name,
+                **metadata,
+                "is_duplicate": False,
+                "skipped_due_to_limit": False,
+                "fs_filtered_metrics": fs_model.metrics if fs_model else None,
+            }
+        )
+
+    if not mode_results:
+        raise ValueError("Frontier search did not produce any unique feature sets.")
+
+    primary_mode = _select_frontier_primary(mode_results, config.get("selection", {}))
+    for mode_name, mode_result in mode_results.items():
+        for model in mode_result.models:
+            model.selected = mode_name == primary_mode and model.name == "fs_filtered"
+    return mode_results, primary_mode, frontier_log
 
 
 def run_experiment(config_path: Optional[Path], results_root: Path = Path("results")) -> ExperimentResult:
@@ -218,30 +395,16 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
     X_val = feature_engineer.transform(splits.X_val)
     X_test = feature_engineer.transform(splits.X_test)
 
-    mode_configs = _build_fs_mode_configs(config)
     X_splits = {"train": X_train, "val": X_val, "test": X_test}
     y_splits = {"train": splits.y_train, "val": splits.y_val, "test": splits.y_test}
 
-    mode_results: Dict[str, ModeResult] = {}
-    for mode_name, fs_mode_cfg in mode_configs.items():
-        fs_config = copy.deepcopy(fs_mode_cfg)
-        fs_config["xgb_fs_params"] = dict(config.get("xgb_fs_params", {}))
-        fs_result = run_feature_selection(
-            X_train, splits.y_train, fs_config, random_state=split_config.random_state
-        )
-        model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
-        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=model_results)
+    fs_search_mode = config.get("fs_search", {}).get("mode", "profiles")
+    if fs_search_mode == "frontier":
+        mode_results, primary_mode, frontier_log = _run_frontier_mode(config, X_splits, y_splits, split_config)
+    else:
+        mode_results, primary_mode, frontier_log = _run_profile_modes(config, X_splits, y_splits, split_config)
 
-    primary_mode = config.get("fs_primary_mode", "moderate")
-    if primary_mode not in mode_results:
-        primary_mode = next(iter(mode_results.keys()))
-    primary_result = mode_results[primary_mode]
-    for mode_name, mode_result in mode_results.items():
-        if mode_name == primary_mode:
-            continue
-        mode_result.identical_to_primary = _mode_results_equal(primary_result, mode_result)
-
-    run_dir = _persist_results(dataset_name, config, mode_results, primary_mode, results_root)
+    run_dir = _persist_results(dataset_name, config, mode_results, primary_mode, results_root, frontier_log)
     experiment_result = ExperimentResult(
         dataset=dataset_name,
         run_dir=run_dir,

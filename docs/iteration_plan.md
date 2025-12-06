@@ -16,14 +16,21 @@ This document tracks the multi-iteration plan for the Feature Selector beyond It
 - **Config surface:** Introduce an opt-in flag (e.g., `fs_search.mode: profiles|frontier`) plus knobs for sweep values, candidate cap, and selection criteria.
 - **Reporting:** Extend `report.md` to summarize the selected frontier point and link to the comprehensive metrics file while keeping the legacy tables for fast mode runs.
 
-## Iteration 2 Backlog
+## Iteration 3
 
-- **Option 2 (greedy pruning):** Implement a rank-guided, incremental pruning loop that removes the weakest SHAP-ranked feature, retrains a lightweight surrogate model, and stops once validation PR-AUC drops meaningfully. This should be configurable as another `fs_search.mode` but is lower priority than the frontier sweep.
+- **SHAP vs permutation overfit filter (top priority):** Implement a mismatch detector that flags features with high SHAP/gain importance but low permutation ΔPR-AUC so the selection rules can penalize or drop overfit signals automatically.
 
-## Iteration 3+
 
+
+## Iterations 5+
 - Benchmark the framework (fast + comprehensive + future greedy mode) against established FS approaches (RFE, Boruta, filter-based methods, and more). This will require:
   - Shared split definitions and evaluation contracts so external algorithms can plug in.
   - Runtime tracking to compare cost vs quality.
   - Report sections or separate notebooks summarizing head-to-head results.
 - Consider integrating the best-performing external FS outputs as additional candidates in the comprehensive search pipeline.
+
+
+
+## Long-term
+
+- **Option 2 (greedy pruning):** Implement a rank-guided, incremental pruning loop that removes the weakest SHAP-ranked feature, retrains a lightweight surrogate model, and stops once validation PR-AUC drops meaningfully. This should be configurable as another `fs_search.mode` but is lower priority than the frontier sweep.

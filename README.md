@@ -84,6 +84,10 @@ A dataset-specific EDA summary is written (or refreshed) at `results/<dataset>/e
 3. **Mild** – low thresholds to retain most features.
 
 Each run loops through all configured modes, producing feature lists and final-model metrics for each. Tweak `fs_modes` in your experiment config to experiment with custom thresholds or rest policies.
+
+### Comprehensive Frontier Search (opt-in)
+
+Set `fs_search.mode: "frontier"` plus the desired sweep values under `fs_search.frontier` to reuse one SHAP/permutation pass while evaluating multiple threshold combinations. The framework deduplicates feature sets, scores each candidate on the outer VAL/TEST splits, and picks the smallest set whose validation PR-AUC is within tolerance of the best-performing candidate. The run directory will include `frontier_candidates.json` summarizing every evaluated point on the frontier.
 ## Project Layout
 
 ```

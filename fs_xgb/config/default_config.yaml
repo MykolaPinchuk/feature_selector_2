@@ -45,6 +45,15 @@ fs_modes:
 
 fs_primary_mode: "moderate"
 
+fs_search:
+  mode: "profiles"
+  frontier:
+    delta_abs_min_values: []
+    k_noise_std_values: []
+    rest_policies: []
+    drop_negative_options: []
+    max_candidates: 8
+
 xgb_fs_params:
   max_depth: 5
   min_child_weight: 10

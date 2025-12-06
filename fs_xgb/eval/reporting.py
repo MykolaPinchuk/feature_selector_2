@@ -82,6 +82,9 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         f"- Final model hyperparameters: {hyperparam_summary}",
         "",
         "## Mode Summary (thresholds & performance)",
+        "_ΔPR min_: minimum absolute PR-AUC drop from permutation importance required to keep a feature. "
+        "_k_noise_std_: multiplier applied to the standard deviation of permutation deltas when computing the dynamic threshold. "
+        "_Rest policy_: governs what happens to features outside the permutation-evaluated set (keep/drop/SHAP rank filter).",
         build_mode_summary_table(result, config),
         "",
         "## Model Performance",
@@ -164,6 +167,10 @@ def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
         cfg = mode_configs.get(mode_name, {})
         thresholds = cfg.get("thresholds", {})
         rest_policy = cfg.get("rest_policy", config.get("fs", {}).get("rest_policy", "keep_all"))
+        metadata = mode_result.metadata or {}
+        delta_value = metadata.get("delta_abs_min", thresholds.get("delta_abs_min", "n/a"))
+        k_noise = metadata.get("k_noise_std", thresholds.get("k_noise_std", "n/a"))
+        rest_policy = metadata.get("rest_policy", rest_policy)
         fs_filtered = next((m for m in mode_result.models if m.name == "fs_filtered"), None)
         train_pr = fs_filtered.metrics["train"]["pr_auc"] if fs_filtered else float("nan")
         val_pr = fs_filtered.metrics["val"]["pr_auc"] if fs_filtered else float("nan")
@@ -173,8 +180,8 @@ def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
                 f"{mode_name} {'(primary)' if mode_name == result.primary_mode else ''}".strip(),
                 len(mode_result.fs_result.kept_features),
                 len(mode_result.fs_result.dropped_features),
-                thresholds.get("delta_abs_min", "n/a"),
-                thresholds.get("k_noise_std", "n/a"),
+                delta_value,
+                k_noise,
                 rest_policy,
                 _format_float(train_pr),
                 _format_float(val_pr),

@@ -28,6 +28,14 @@ class FeatureSelectionResult:
     shap_importance: pd.Series
 
 
+@dataclass
+class FeatureImportanceArtifacts:
+    """Reusable SHAP + permutation outputs for multiple selection passes."""
+
+    permutation_table: pd.DataFrame
+    shap_importance: pd.Series
+
+
 def _make_inner_split(X: pd.DataFrame, y: pd.Series, holdout_frac: float, random_state: int) -> Tuple:
     return train_test_split(
         X,
@@ -132,8 +140,8 @@ def _apply_selection_rules(fi_table: pd.DataFrame, shap_importance: pd.Series, c
     return keep, drop
 
 
-def run_feature_selection(X: pd.DataFrame, y: pd.Series, config: Dict, random_state: int = 42) -> FeatureSelectionResult:
-    """Execute the SHAP + permutation-based FS pipeline."""
+def compute_fs_artifacts(X: pd.DataFrame, y: pd.Series, config: Dict, random_state: int = 42) -> FeatureImportanceArtifacts:
+    """Run the expensive SHAP + permutation steps once and return reusable artifacts."""
 
     if X.empty:
         raise ValueError("Feature matrix is empty; cannot run feature selection.")
@@ -170,15 +178,28 @@ def run_feature_selection(X: pd.DataFrame, y: pd.Series, config: Dict, random_st
     shap_mean = _aggregate_shap(shap_values)
     top_features = shap_mean.head(topk).index.tolist()
     fi_table = _permutation_table(models, X_eval, y_eval, top_features, random_state=inner_random_state)
-    kept, dropped = _apply_selection_rules(fi_table, shap_mean, config)
+    return FeatureImportanceArtifacts(permutation_table=fi_table, shap_importance=shap_mean)
 
+
+def build_fs_result_from_artifacts(artifacts: FeatureImportanceArtifacts, config: Dict, all_features: List[str]) -> FeatureSelectionResult:
+    """Apply selection thresholds using precomputed artifacts."""
+
+    fi_table = artifacts.permutation_table.copy()
+    shap_importance = artifacts.shap_importance.copy()
+    kept, dropped = _apply_selection_rules(fi_table, shap_importance, config)
     if not kept:
-        kept = list(X.columns)
+        kept = list(all_features)
         dropped = []
-
     return FeatureSelectionResult(
         kept_features=kept,
         dropped_features=dropped,
         permutation_table=fi_table,
-        shap_importance=shap_mean,
+        shap_importance=shap_importance,
     )
+
+
+def run_feature_selection(X: pd.DataFrame, y: pd.Series, config: Dict, random_state: int = 42) -> FeatureSelectionResult:
+    """Execute the SHAP + permutation-based FS pipeline."""
+
+    artifacts = compute_fs_artifacts(X, y, config, random_state=random_state)
+    return build_fs_result_from_artifacts(artifacts, config, list(X.columns))

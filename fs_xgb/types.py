@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fs_xgb.fs_logic import FeatureSelectionResult
 
@@ -22,6 +22,7 @@ class ModeResult:
     fs_result: FeatureSelectionResult
     models: List[ModelResult]
     identical_to_primary: bool = False
+    metadata: Optional[Dict] = field(default=None)
 
 
 @dataclass
