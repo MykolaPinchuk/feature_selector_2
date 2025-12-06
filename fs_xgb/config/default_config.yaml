@@ -1,0 +1,45 @@
+dataset: "student_grades"
+target: "is_high_grade"
+metric: "prauc"
+
+paths:
+  data_root: "data/raw"
+
+splits:
+  strategy: "random"
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+fs:
+  n_fs_models: 3
+  topk_shap: 40
+  fs_eval:
+    neg_pos_ratio: 8
+  thresholds:
+    delta_abs_min: 0.001
+    k_noise_std: 2.0
+  rest_policy: "keep_all"
+
+xgb_fs_params:
+  max_depth: 5
+  min_child_weight: 10
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 1.0
+  eta: 0.1
+  n_estimators: 300
+
+xgb_final_params:
+  max_depth: 6
+  min_child_weight: 10
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 2.0
+  eta: 0.05
+  n_estimators: 2000
+  early_stopping_rounds: 100
+
+selection:
+  val_tolerance_relative: 0.01
+  max_final_feature_sets: 3
