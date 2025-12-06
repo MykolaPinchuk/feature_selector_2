@@ -1,5 +1,7 @@
 # PRD: Permutation- and SHAP-based Feature Selection Framework for XGBoost
 
+This is an original PRD for a feature selection framework. It started Iteration 1.
+
 ## 1. Overview
 
 ### 1.1 Objective

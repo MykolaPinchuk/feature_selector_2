@@ -93,6 +93,7 @@ fs_xgb/
   splitting/                    # Train/val/test split utilities
 data/raw/                       # (gitignored) source CSVs
 logs/agents/                    # Agent run logs (see below)
+docs/iteration_plan.md          # Iteration roadmap and future FS enhancements
 prd.md                          # Product requirements document
 ```
 
