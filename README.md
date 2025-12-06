@@ -59,9 +59,19 @@ All encoders live under `fs_xgb.preprocessing` and can be composed via `FeatureE
 
 Use the CLI to run the full pipeline (feature engineering → FS → baseline comparisons). Results are written to `results/<dataset>/<timestamp>/` and include metrics, feature importances, and the resolved configuration.
 
+**Profile loop (aggressive/moderate/mild):**
+
 ```bash
 python -m fs_xgb.cli.main \
   --config fs_xgb/experiments/configs/student_grades.yaml \
+  --results-dir results
+```
+
+**Frontier sweep (reuse SHAP/permutation pass across many threshold combos):**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/student_grades_frontier.yaml \
   --results-dir results
 ```
 
@@ -84,6 +94,10 @@ A dataset-specific EDA summary is written (or refreshed) at `results/<dataset>/e
 3. **Mild** – low thresholds to retain most features.
 
 Each run loops through all configured modes, producing feature lists and final-model metrics for each. Tweak `fs_modes` in your experiment config to experiment with custom thresholds or rest policies.
+
+### Overfit Filters (SHAP & Gain)
+
+Permutation ΔPR-AUC reflects generalization utility while SHAP and XGBoost gain highlight model reliance. Starting in Iteration 3 you can enable `fs.overfit_filter` (SHAP-focused) and `fs.gain_overfit_filter` to automatically penalize features that rank highly by SHAP/gain but fail to register meaningful permutation gains. Configure the rank windows, maximum acceptable ΔPR-AUC (and optional noise constraints), and whether each filter should hard-drop or simply demote those columns back into the "rest" bucket. The logic runs before final-model training and is compatible with both the fast profile loop and the comprehensive frontier search.
 
 ### Comprehensive Frontier Search (opt-in)
 

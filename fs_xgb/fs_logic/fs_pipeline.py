@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -12,10 +12,10 @@ from sklearn.model_selection import train_test_split
 from fs_xgb.metrics import pr_auc_score
 from fs_xgb.models import predict_proba, train_xgb_classifier
 
-try:
+try:  # pragma: no cover - optional import for unit tests
     import shap
-except ImportError as exc:  # pragma: no cover - shap is part of project deps
-    raise RuntimeError("shap must be installed to run feature selection.") from exc
+except ImportError:  # pragma: no cover - tests without shap
+    shap = None
 
 
 @dataclass
@@ -26,6 +26,15 @@ class FeatureSelectionResult:
     dropped_features: List[str]
     permutation_table: pd.DataFrame
     shap_importance: pd.Series
+    gain_importance: pd.Series
+    shap_overfit_features: List[str] = field(default_factory=list)
+    gain_overfit_features: List[str] = field(default_factory=list)
+
+    @property
+    def overfit_features(self) -> List[str]:
+        """Union of SHAP- and gain-based mismatch flags."""
+
+        return sorted(set(self.shap_overfit_features).union(self.gain_overfit_features))
 
 
 @dataclass
@@ -34,6 +43,7 @@ class FeatureImportanceArtifacts:
 
     permutation_table: pd.DataFrame
     shap_importance: pd.Series
+    gain_importance: pd.Series
 
 
 def _make_inner_split(X: pd.DataFrame, y: pd.Series, holdout_frac: float, random_state: int) -> Tuple:
@@ -62,6 +72,8 @@ def _create_fs_eval(X: pd.DataFrame, y: pd.Series, neg_pos_ratio: float, random_
 
 
 def _compute_shap_importance(model, X_eval: pd.DataFrame) -> pd.Series:
+    if shap is None:
+        raise RuntimeError("shap must be installed to run feature selection.")
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_eval)
     if isinstance(shap_values, list):
@@ -106,7 +118,60 @@ def _permutation_table(
     return pd.DataFrame(rows).sort_values("delta_mean", ascending=False).reset_index(drop=True)
 
 
-def _apply_selection_rules(fi_table: pd.DataFrame, shap_importance: pd.Series, config: Dict) -> Tuple[List[str], List[str]]:
+def _flag_overfit_features(fi_table: pd.DataFrame, shap_importance: pd.Series, config: Dict) -> List[str]:
+    cfg = config or {}
+    if not cfg.get("enabled"):
+        return []
+    max_rank = cfg.get("max_shap_rank")
+    delta_max = cfg.get("delta_max", 0.0)
+    delta_std_max = cfg.get("delta_std_max")
+    shap_rank = shap_importance.rank(ascending=False, method="min")
+    if fi_table.empty:
+        fi_lookup = pd.DataFrame(columns=["delta_mean", "delta_std"]).set_index(pd.Index([]))
+    else:
+        fi_lookup = fi_table.set_index("feature")
+    flagged = []
+    for feature, rank in shap_rank.items():
+        if max_rank is not None and rank > max_rank:
+            continue
+        delta_mean = float(fi_lookup.at[feature, "delta_mean"]) if feature in fi_lookup.index else 0.0
+        delta_std = float(fi_lookup.at[feature, "delta_std"]) if feature in fi_lookup.index else 0.0
+        if delta_mean <= delta_max and (delta_std_max is None or delta_std <= delta_std_max):
+            flagged.append(feature)
+    return flagged
+
+
+def _flag_gain_overfit_features(fi_table: pd.DataFrame, gain_importance: pd.Series | None, config: Dict) -> List[str]:
+    if gain_importance is None:
+        return []
+    cfg = config or {}
+    if not cfg.get("enabled"):
+        return []
+    max_rank = cfg.get("max_gain_rank")
+    delta_max = cfg.get("delta_max", 0.0)
+    delta_std_max = cfg.get("delta_std_max")
+    gain_rank = gain_importance.rank(ascending=False, method="min")
+    if fi_table.empty:
+        fi_lookup = pd.DataFrame(columns=["delta_mean", "delta_std"]).set_index(pd.Index([]))
+    else:
+        fi_lookup = fi_table.set_index("feature")
+    flagged = []
+    for feature, rank in gain_rank.items():
+        if max_rank is not None and rank > max_rank:
+            continue
+        delta_mean = float(fi_lookup.at[feature, "delta_mean"]) if feature in fi_lookup.index else 0.0
+        delta_std = float(fi_lookup.at[feature, "delta_std"]) if feature in fi_lookup.index else 0.0
+        if delta_mean <= delta_max and (delta_std_max is None or delta_std <= delta_std_max):
+            flagged.append(feature)
+    return flagged
+
+
+def _apply_selection_rules(
+    fi_table: pd.DataFrame,
+    shap_importance: pd.Series,
+    gain_importance: pd.Series | None,
+    config: Dict,
+) -> Tuple[List[str], List[str], List[str], List[str]]:
     thresholds = config.get("thresholds", {})
     delta_abs_min = thresholds.get("delta_abs_min", 0.0)
     k_noise_std = thresholds.get("k_noise_std", 2.0)
@@ -118,9 +183,42 @@ def _apply_selection_rules(fi_table: pd.DataFrame, shap_importance: pd.Series, c
     keep = fi_table[fi_table["delta_mean"] >= threshold]["feature"].tolist()
     drop = [feat for feat in fi_table["feature"] if feat not in keep]
 
+    shap_cfg = config.get("overfit_filter", {})
+    shap_flags = set(_flag_overfit_features(fi_table, shap_importance, shap_cfg))
+    shap_action = shap_cfg.get("action", "drop")
+    if shap_action not in {"drop", "demote"}:
+        shap_action = "drop"
+
+    gain_cfg = config.get("gain_overfit_filter", {})
+    gain_flags = set(_flag_gain_overfit_features(fi_table, gain_importance, gain_cfg))
+    gain_action = gain_cfg.get("action", "drop")
+    if gain_action not in {"drop", "demote"}:
+        gain_action = "drop"
+
+    drop_overfit = set()
+    demote_overfit = set()
+    if shap_action == "drop":
+        drop_overfit.update(shap_flags)
+    else:
+        demote_overfit.update(shap_flags)
+    if gain_action == "drop":
+        drop_overfit.update(gain_flags)
+    else:
+        demote_overfit.update(gain_flags)
+
+    if drop_overfit:
+        keep = [feat for feat in keep if feat not in drop_overfit]
+    if demote_overfit:
+        keep = [feat for feat in keep if feat not in demote_overfit]
+
     rest_policy = config.get("rest_policy", "keep_all")
     shap_rank = shap_importance.rank(ascending=False, method="min")
-    rest_features = [feat for feat in shap_importance.index if feat not in fi_table["feature"]]
+    permuted_features = set(fi_table["feature"]).difference(demote_overfit)
+    rest_features = [
+        feat
+        for feat in shap_importance.index
+        if feat not in permuted_features and feat not in drop_overfit
+    ]
 
     if rest_policy == "keep_all":
         keep.extend(rest_features)
@@ -136,8 +234,10 @@ def _apply_selection_rules(fi_table: pd.DataFrame, shap_importance: pd.Series, c
         negative_features = fi_table[fi_table["delta_mean"] <= 0]["feature"].tolist()
         drop = sorted(set(drop).union(negative_features))
         keep = [feat for feat in keep if feat not in drop]
-
-    return keep, drop
+    if drop_overfit:
+        drop = sorted(set(drop).union(drop_overfit))
+        keep = [feat for feat in keep if feat not in drop_overfit]
+    return keep, drop, sorted(shap_flags), sorted(gain_flags)
 
 
 def compute_fs_artifacts(X: pd.DataFrame, y: pd.Series, config: Dict, random_state: int = 42) -> FeatureImportanceArtifacts:
@@ -161,6 +261,7 @@ def compute_fs_artifacts(X: pd.DataFrame, y: pd.Series, config: Dict, random_sta
 
     models = []
     shap_values = []
+    gain_values = []
     for seed in range(n_models):
         model_params = dict(fs_params)
         model_params["random_state"] = inner_random_state + seed
@@ -174,11 +275,17 @@ def compute_fs_artifacts(X: pd.DataFrame, y: pd.Series, config: Dict, random_sta
         )
         models.append(model)
         shap_values.append(_compute_shap_importance(model, X_eval))
+        booster = model.get_booster()
+        gain_dict = booster.get_score(importance_type="gain")
+        gain_series = pd.Series(gain_dict, dtype=float)
+        gain_series = gain_series.reindex(X_train_fs.columns, fill_value=0.0)
+        gain_values.append(gain_series)
 
     shap_mean = _aggregate_shap(shap_values)
+    gain_mean = pd.concat(gain_values, axis=1).mean(axis=1).sort_values(ascending=False)
     top_features = shap_mean.head(topk).index.tolist()
     fi_table = _permutation_table(models, X_eval, y_eval, top_features, random_state=inner_random_state)
-    return FeatureImportanceArtifacts(permutation_table=fi_table, shap_importance=shap_mean)
+    return FeatureImportanceArtifacts(permutation_table=fi_table, shap_importance=shap_mean, gain_importance=gain_mean)
 
 
 def build_fs_result_from_artifacts(artifacts: FeatureImportanceArtifacts, config: Dict, all_features: List[str]) -> FeatureSelectionResult:
@@ -186,7 +293,13 @@ def build_fs_result_from_artifacts(artifacts: FeatureImportanceArtifacts, config
 
     fi_table = artifacts.permutation_table.copy()
     shap_importance = artifacts.shap_importance.copy()
-    kept, dropped = _apply_selection_rules(fi_table, shap_importance, config)
+    gain_importance = artifacts.gain_importance.copy()
+    kept, dropped, shap_flags, gain_flags = _apply_selection_rules(
+        fi_table,
+        shap_importance,
+        gain_importance,
+        config,
+    )
     if not kept:
         kept = list(all_features)
         dropped = []
@@ -195,6 +308,9 @@ def build_fs_result_from_artifacts(artifacts: FeatureImportanceArtifacts, config
         dropped_features=dropped,
         permutation_table=fi_table,
         shap_importance=shap_importance,
+        gain_importance=gain_importance,
+        shap_overfit_features=shap_flags,
+        gain_overfit_features=gain_flags,
     )
 
 

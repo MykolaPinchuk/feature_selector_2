@@ -208,6 +208,9 @@ def _persist_results(
         mode_result.fs_result.shap_importance.rename("mean_abs_shap").to_csv(
             run_dir / f"shap_importance{suffix}.csv"
         )
+        mode_result.fs_result.gain_importance.rename("mean_gain").to_csv(
+            run_dir / f"gain_importance{suffix}.csv"
+        )
         metrics_payload = [
             {"model": m.name, "selected": m.selected, "feature_count": len(m.feature_names), "metrics": m.metrics}
             for m in mode_result.models
@@ -246,7 +249,15 @@ def _run_profile_modes(
             X_splits["train"], y_splits["train"], fs_config, random_state=split_config.random_state
         )
         model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
-        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=model_results)
+        mode_metadata = {
+            "shap_overfit_features": fs_result.shap_overfit_features,
+            "shap_overfit_count": len(fs_result.shap_overfit_features),
+            "gain_overfit_features": fs_result.gain_overfit_features,
+            "gain_overfit_count": len(fs_result.gain_overfit_features),
+            "overfit_flagged_features": fs_result.overfit_features,
+            "overfit_flagged_count": len(fs_result.overfit_features),
+        }
+        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=model_results, metadata=mode_metadata)
 
     primary_mode = config.get("fs_primary_mode", "moderate")
     if primary_mode not in mode_results:
@@ -324,6 +335,12 @@ def _run_frontier_mode(
             "drop_negative_features": fs_config.get("drop_negative_features", True),
             "kept_features": len(fs_result.kept_features),
             "dropped_features": len(fs_result.dropped_features),
+            "shap_overfit_features": fs_result.shap_overfit_features,
+            "shap_overfit_count": len(fs_result.shap_overfit_features),
+            "gain_overfit_features": fs_result.gain_overfit_features,
+            "gain_overfit_count": len(fs_result.gain_overfit_features),
+            "overfit_flagged_features": fs_result.overfit_features,
+            "overfit_flagged_count": len(fs_result.overfit_features),
         }
         if feature_key in feature_to_mode:
             candidate_entry = {
@@ -350,7 +367,7 @@ def _run_frontier_mode(
             continue
         models = _train_and_eval_models(config, X_splits, y_splits, fs_result)
         mode_name = f"frontier_{len(mode_results) + 1}"
-        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=models, metadata=metadata)
+        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=models, metadata=dict(metadata))
         feature_to_mode[feature_key] = mode_name
         fs_model = next((m for m in models if m.name == "fs_filtered"), None)
         frontier_log.append(

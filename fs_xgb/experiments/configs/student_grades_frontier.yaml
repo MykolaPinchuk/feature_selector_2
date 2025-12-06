@@ -20,6 +20,18 @@ fs:
     k_noise_std: 2.0
   rest_policy: "keep_all"
   drop_negative_features: true
+  overfit_filter:
+    enabled: true
+    max_shap_rank: 25
+    delta_max: 0.0005
+    delta_std_max: 0.002
+    action: "drop"
+  gain_overfit_filter:
+    enabled: true
+    max_gain_rank: 25
+    delta_max: 0.0005
+    delta_std_max: 0.002
+    action: "drop"
 
 fs_modes: {}
 fs_primary_mode: "moderate"

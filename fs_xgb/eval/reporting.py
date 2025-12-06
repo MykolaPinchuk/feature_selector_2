@@ -46,11 +46,26 @@ def build_metrics_table(models: List[ModelResult]) -> str:
 def build_feature_summary(fs_result: FeatureSelectionResult) -> str:
     kept = len(fs_result.kept_features)
     dropped = len(fs_result.dropped_features)
-    return (
-        f"- Total features (post FE): {kept + dropped}\n"
-        f"- Kept after FS: {kept}\n"
-        f"- Dropped after FS: {dropped}"
-    )
+    lines = [
+        f"- Total features (post FE): {kept + dropped}",
+        f"- Kept after FS: {kept}",
+        f"- Dropped after FS: {dropped}",
+    ]
+    if fs_result.shap_overfit_features:
+        lines.append(
+            f"- SHAP overfit flags (high SHAP, low ΔPR-AUC): {len(fs_result.shap_overfit_features)}"
+        )
+    if fs_result.gain_overfit_features:
+        lines.append(
+            f"- Gain overfit flags (high gain, low ΔPR-AUC): {len(fs_result.gain_overfit_features)}"
+        )
+    return "\n".join(lines)
+
+
+def build_overfit_section(features: List[str]) -> str:
+    if not features:
+        return "_None._"
+    return _markdown_table(["Feature"], [[feature] for feature in features])
 
 
 def build_top_tables(fs_result: FeatureSelectionResult, top_n: int = 15) -> str:
@@ -93,6 +108,12 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         "## Feature Summary",
         build_feature_summary(primary.fs_result),
         "",
+        "## SHAP vs Permutation Overfit Flags",
+        build_overfit_section(primary.fs_result.shap_overfit_features),
+        "",
+        "## Gain vs Permutation Overfit Flags",
+        build_overfit_section(primary.fs_result.gain_overfit_features),
+        "",
         build_top_tables(primary.fs_result),
     ]
 
@@ -111,6 +132,13 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
             [
                 "#### Feature Set",
                 build_feature_list_table(mode_result.fs_result),
+                "",
+                "#### Overfit Flags",
+                "_SHAP vs permutation:_",
+                build_overfit_section(mode_result.fs_result.shap_overfit_features),
+                "",
+                "_Gain vs permutation:_",
+                build_overfit_section(mode_result.fs_result.gain_overfit_features),
                 "",
                 "#### Performance",
                 build_metrics_table(mode_result.models),

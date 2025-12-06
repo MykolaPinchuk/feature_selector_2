@@ -2,7 +2,7 @@
 
 This document tracks the multi-iteration plan for the Feature Selector beyond Iteration&nbsp;1. Keep it updated as priorities shift so future agents can pick up the context quickly.
 
-## Iteration 2 (current)
+## Iteration 2 (complete)
 
 - **Goal:** Add an optional “comprehensive” search mode that sweeps the feature-selection threshold space to approximate the full performance/feature-count frontier while preserving the existing fast profiles.
 - **Fast mode (default):** Keep the present aggressive/moderate/mild profile loop untouched for quick experiments.
@@ -16,10 +16,20 @@ This document tracks the multi-iteration plan for the Feature Selector beyond It
 - **Config surface:** Introduce an opt-in flag (e.g., `fs_search.mode: profiles|frontier`) plus knobs for sweep values, candidate cap, and selection criteria.
 - **Reporting:** Extend `report.md` to summarize the selected frontier point and link to the comprehensive metrics file while keeping the legacy tables for fast mode runs.
 
-## Iteration 3
+## Iteration 3 (current)
 
-- **SHAP vs permutation overfit filter (top priority):** Implement a mismatch detector that flags features with high SHAP/gain importance but low permutation ΔPR-AUC so the selection rules can penalize or drop overfit signals automatically.
+- **Goal:** Ship a configurable overfit detector that cross-references SHAP ranks with permutation ΔPR-AUC so FS can suppress high-usage/low-value columns.
+- **Config surface:** Introduce `fs.overfit_filter` (SHAP) and `fs.gain_overfit_filter` with knobs for enabling/disabling, rank windows, ΔPR-AUC and noise ceilings, and an action (`drop` vs `demote`). Allow overrides per `fs_modes`.
+- **Selection logic:** Extend `_apply_selection_rules` so the flagged features are either forcibly dropped or demoted back into the rest-policy bucket before final kept/dropped lists are emitted. Features outside the permutation Top-K should still be eligible for flagging by treating their ΔPR-AUC as ~0.
+- **Metadata & reporting:** Surface both SHAP- and gain-mismatch sets in `ModeResult.metadata`, list them in `report.md`, and log counts in `frontier_candidates.json` so users understand why features disappeared.
+- **Tests:** Unit tests for the detector plus an integration smoke test that validates at least one feature is filtered when the heuristic criteria are met.
 
+
+## Iteration 4
+
+- Onboard Census dataset. Be carefull with running time since it is 50 times larger than the student grades dataset.
+- Add correlation anlysis to EDA.
+- Explore whether to add pre-filters to FS pipeline.
 
 
 ## Iterations 5+

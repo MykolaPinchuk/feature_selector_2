@@ -24,7 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "ipykernel",
-    "jupyter"
+    "jupyter",
+    "pytest>=7.0"
 ]
 
 [tool.setuptools.packages.find]
