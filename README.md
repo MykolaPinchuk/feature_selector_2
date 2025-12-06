@@ -67,14 +67,23 @@ python -m fs_xgb.cli.main \
 
 After the run completes you can inspect:
 
-- `metrics.json`: PR-AUC/ROC-AUC on train/val/test for each model variant plus which one satisfied the tolerance criterion.
-- `permutation_fi.csv`: ΔPR-AUC per permuted feature aggregated across FS models.
-- `shap_importance.csv`: Mean |SHAP| values used for permutation triage.
-- `features.json`: Lists of kept vs dropped features.
-- `report.md`: Human-readable Markdown summary with metric tables and top-feature breakdowns.
+- `metrics.json`: PR-AUC/ROC-AUC on train/val/test for each model variant plus which one satisfied the tolerance criterion for the **primary** FS mode (default: moderate).
+- `metrics_aggressive.json` / `metrics_mild.json`: Additional summaries for the alternate FS modes.
+- `permutation_fi*.csv`, `shap_importance*.csv`, `features*.json`: Mode-specific feature-importance outputs.
+- `report.md`: Human-readable Markdown summary that focuses on the primary mode and also lists feature sets + performance for the alternate modes.
 - `config.yaml`: The resolved configuration (defaults + overrides) used for the run.
 
 A dataset-specific EDA summary is written (or refreshed) at `results/<dataset>/eda.md`, covering target distribution, per-column missingness, and numeric stats. This lets you review the dataset once and keep it alongside experiment outputs.
+
+### Feature-Selection Modes
+
+`fs_xgb/config/default_config.yaml` defines three FS aggressiveness profiles:
+
+1. **Aggressive** – high ΔPR-AUC threshold + drop-all rest policy; expects substantial feature pruning.
+2. **Moderate** – balanced thresholds; this is the `fs_primary_mode` that drives final model selection/reporting.
+3. **Mild** – low thresholds to retain most features.
+
+Each run loops through all configured modes, producing feature lists and final-model metrics for each. Tweak `fs_modes` in your experiment config to experiment with custom thresholds or rest policies.
 ## Project Layout
 
 ```

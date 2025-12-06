@@ -8,7 +8,8 @@ from typing import Iterable, List
 
 import pandas as pd
 
-from fs_xgb.types import ExperimentResult, ModelResult
+from fs_xgb.fs_logic import FeatureSelectionResult
+from fs_xgb.types import ExperimentResult, ModeResult, ModelResult
 
 
 def _markdown_table(headers: List[str], rows: Iterable[Iterable]) -> str:
@@ -41,9 +42,9 @@ def build_metrics_table(models: List[ModelResult]) -> str:
     return _markdown_table(headers, rows)
 
 
-def build_feature_summary(result: ExperimentResult) -> str:
-    kept = len(result.fs_result.kept_features)
-    dropped = len(result.fs_result.dropped_features)
+def build_feature_summary(fs_result: FeatureSelectionResult) -> str:
+    kept = len(fs_result.kept_features)
+    dropped = len(fs_result.dropped_features)
     return (
         f"- Total features (post FE): {kept + dropped}\n"
         f"- Kept after FS: {kept}\n"
@@ -51,15 +52,15 @@ def build_feature_summary(result: ExperimentResult) -> str:
     )
 
 
-def build_top_tables(result: ExperimentResult, top_n: int = 15) -> str:
-    permutation = result.fs_result.permutation_table.head(top_n)
+def build_top_tables(fs_result: FeatureSelectionResult, top_n: int = 15) -> str:
+    permutation = fs_result.permutation_table.head(top_n)
     permutation_rows = [
         [row["feature"], _format_float(row["delta_mean"]), _format_float(row["delta_std"])]
         for _, row in permutation.iterrows()
     ]
     perm_table = _markdown_table(["Feature", "ΔPR-AUC (mean)", "ΔPR-AUC (std)"], permutation_rows)
 
-    shap_series = result.fs_result.shap_importance.head(top_n)
+    shap_series = fs_result.shap_importance.head(top_n)
     shap_table = _markdown_table(
         ["Feature", "Mean abs(SHAP)"], [[feature, _format_float(value)] for feature, value in shap_series.items()]
     )
@@ -69,20 +70,52 @@ def build_top_tables(result: ExperimentResult, top_n: int = 15) -> str:
 def generate_experiment_report_markdown(result: ExperimentResult, config: dict) -> str:
     dataset = result.dataset
     timestamp = result.run_dir.name
+    primary_mode = result.primary_mode
+    primary = result.mode_results[primary_mode]
     lines = [
         f"# Feature Selection Report – {dataset}",
         f"- Run timestamp: `{timestamp}`",
         f"- Results directory: `{result.run_dir}`",
         "",
         "## Model Performance",
-        build_metrics_table(result.models),
+        build_metrics_table(primary.models),
         "",
         "## Feature Summary",
-        build_feature_summary(result),
+        build_feature_summary(primary.fs_result),
         "",
-        build_top_tables(result),
+        build_top_tables(primary.fs_result),
     ]
+
+    other_modes = [name for name in result.mode_results.keys() if name != primary_mode]
+    if other_modes:
+        lines.append("")
+        lines.append("## Additional Feature-Selection Modes")
+    for mode_name in other_modes:
+        mode_result = result.mode_results[mode_name]
+        lines.extend(
+            [
+                f"### Mode: {mode_name}",
+                "#### Feature Set",
+                build_feature_list_table(mode_result.fs_result),
+                "",
+                "#### Performance",
+                build_metrics_table(mode_result.models),
+                "",
+            ]
+        )
     return "\n".join(lines)
+
+
+def build_feature_list_table(fs_result: FeatureSelectionResult) -> str:
+    kept = ", ".join(fs_result.kept_features) if fs_result.kept_features else "-"
+    dropped = ", ".join(fs_result.dropped_features) if fs_result.dropped_features else "-"
+    return _markdown_table(
+        ["Type", "Features"],
+        [
+            ["Kept", kept],
+            ["Dropped", dropped],
+        ],
+    )
 
 
 def write_experiment_report(result: ExperimentResult, config: dict) -> Path:

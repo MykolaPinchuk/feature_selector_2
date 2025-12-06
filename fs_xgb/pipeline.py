@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import copy
 import pandas as pd
 import yaml
 
@@ -17,7 +18,7 @@ from fs_xgb.metrics import compute_classification_metrics
 from fs_xgb.models import predict_proba, train_xgb_classifier
 from fs_xgb.preprocessing import FeatureEngineer, FeatureEngineerConfig, TargetEncodingConfig
 from fs_xgb.splitting import RandomSplitConfig, create_random_splits
-from fs_xgb.types import ExperimentResult, ModelResult
+from fs_xgb.types import ExperimentResult, ModeResult, ModelResult
 
 
 def _deep_update(base: Dict, updates: Dict) -> Dict:
@@ -52,6 +53,20 @@ def _prepare_feature_engineer(config: Dict) -> FeatureEngineer:
     )
 
 
+def _build_fs_mode_configs(config: Dict) -> Dict[str, Dict]:
+    base = copy.deepcopy(config.get("fs", {}))
+    modes_cfg = config.get("fs_modes")
+    if not modes_cfg:
+        return {"moderate": base}
+    mode_configs = {}
+    for name, overrides in modes_cfg.items():
+        merged = copy.deepcopy(base)
+        if overrides:
+            merged = _deep_update(merged, copy.deepcopy(overrides))
+        mode_configs[name] = merged
+    return mode_configs
+
+
 def _evaluate_model(model, X_dict: Dict[str, pd.DataFrame], y_dict: Dict[str, pd.Series]) -> Dict[str, Dict[str, float]]:
     metrics = {}
     for split in ["train", "val", "test"]:
@@ -81,13 +96,16 @@ def _train_and_eval_models(
         X_train = X_splits["train"][features]
         X_val = X_splits["val"][features]
         X_test = X_splits["test"][features]
+        model_params = dict(params)
+        model_params.setdefault("random_state", selection_cfg.get("final_model_random_state", 42))
+        model_params["subsample"] = 1.0
         model = train_xgb_classifier(
             X_train,
             y_splits["train"],
             X_val,
             y_splits["val"],
-            params=params,
-            early_stopping_rounds=params.get("early_stopping_rounds", 100),
+            params=model_params,
+            early_stopping_rounds=model_params.get("early_stopping_rounds", 100),
         )
         metrics = _evaluate_model(
             model,
@@ -110,8 +128,8 @@ def _train_and_eval_models(
 def _persist_results(
     dataset: str,
     config: Dict,
-    fs_result: FeatureSelectionResult,
-    models: List[ModelResult],
+    mode_results: Dict[str, ModeResult],
+    primary_mode: str,
     results_root: Path,
 ) -> Path:
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -121,25 +139,29 @@ def _persist_results(
     with (run_dir / "config.yaml").open("w", encoding="utf-8") as fh:
         yaml.safe_dump(config, fh)
 
-    fs_result.permutation_table.to_csv(run_dir / "permutation_fi.csv", index=False)
-    fs_result.shap_importance.rename("mean_abs_shap").to_csv(run_dir / "shap_importance.csv")
-
-    metrics_payload = [
-        {"model": m.name, "selected": m.selected, "feature_count": len(m.feature_names), "metrics": m.metrics}
-        for m in models
-    ]
-    with (run_dir / "metrics.json").open("w", encoding="utf-8") as fh:
-        json.dump(metrics_payload, fh, indent=2)
-
-    with (run_dir / "features.json").open("w", encoding="utf-8") as fh:
-        json.dump(
-            {
-                "kept_features": fs_result.kept_features,
-                "dropped_features": fs_result.dropped_features,
-            },
-            fh,
-            indent=2,
+    for mode_name, mode_result in mode_results.items():
+        suffix = "" if mode_name == primary_mode else f"_{mode_name}"
+        mode_result.fs_result.permutation_table.to_csv(
+            run_dir / f"permutation_fi{suffix}.csv", index=False
         )
+        mode_result.fs_result.shap_importance.rename("mean_abs_shap").to_csv(
+            run_dir / f"shap_importance{suffix}.csv"
+        )
+        metrics_payload = [
+            {"model": m.name, "selected": m.selected, "feature_count": len(m.feature_names), "metrics": m.metrics}
+            for m in mode_result.models
+        ]
+        with (run_dir / f"metrics{suffix}.json").open("w", encoding="utf-8") as fh:
+            json.dump(metrics_payload, fh, indent=2)
+        with (run_dir / f"features{suffix}.json").open("w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "kept_features": mode_result.fs_result.kept_features,
+                    "dropped_features": mode_result.fs_result.dropped_features,
+                },
+                fh,
+                indent=2,
+            )
 
     return run_dir
 
@@ -165,20 +187,30 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
     X_val = feature_engineer.transform(splits.X_val)
     X_test = feature_engineer.transform(splits.X_test)
 
-    fs_config = dict(config.get("fs", {}))
-    fs_config["xgb_fs_params"] = dict(config.get("xgb_fs_params", {}))
-    fs_result = run_feature_selection(X_train, splits.y_train, fs_config, random_state=split_config.random_state)
-
+    mode_configs = _build_fs_mode_configs(config)
     X_splits = {"train": X_train, "val": X_val, "test": X_test}
     y_splits = {"train": splits.y_train, "val": splits.y_val, "test": splits.y_test}
 
-    model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
-    run_dir = _persist_results(dataset_name, config, fs_result, model_results, results_root)
+    mode_results: Dict[str, ModeResult] = {}
+    for mode_name, fs_mode_cfg in mode_configs.items():
+        fs_config = copy.deepcopy(fs_mode_cfg)
+        fs_config["xgb_fs_params"] = dict(config.get("xgb_fs_params", {}))
+        fs_result = run_feature_selection(
+            X_train, splits.y_train, fs_config, random_state=split_config.random_state
+        )
+        model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
+        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=model_results)
+
+    primary_mode = config.get("fs_primary_mode", "moderate")
+    if primary_mode not in mode_results:
+        primary_mode = next(iter(mode_results.keys()))
+
+    run_dir = _persist_results(dataset_name, config, mode_results, primary_mode, results_root)
     experiment_result = ExperimentResult(
         dataset=dataset_name,
         run_dir=run_dir,
-        fs_result=fs_result,
-        models=model_results,
+        mode_results=mode_results,
+        primary_mode=primary_mode,
     )
     write_experiment_report(experiment_result, config)
 

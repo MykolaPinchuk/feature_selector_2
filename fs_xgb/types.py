@@ -18,8 +18,14 @@ class ModelResult:
 
 
 @dataclass
+class ModeResult:
+    fs_result: FeatureSelectionResult
+    models: List[ModelResult]
+
+
+@dataclass
 class ExperimentResult:
     dataset: str
     run_dir: Path
-    fs_result: FeatureSelectionResult
-    models: List[ModelResult]
+    mode_results: Dict[str, ModeResult]
+    primary_mode: str

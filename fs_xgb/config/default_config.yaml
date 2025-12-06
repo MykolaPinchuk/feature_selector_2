@@ -12,6 +12,7 @@ splits:
   random_state: 42
 
 fs:
+  holdout_fraction: 0.25
   n_fs_models: 3
   topk_shap: 40
   fs_eval:
@@ -20,6 +21,25 @@ fs:
     delta_abs_min: 0.001
     k_noise_std: 2.0
   rest_policy: "keep_all"
+
+fs_modes:
+  aggressive:
+    thresholds:
+      delta_abs_min: 0.004
+      k_noise_std: 1.0
+    rest_policy: "drop_all"
+  moderate:
+    thresholds:
+      delta_abs_min: 0.0025
+      k_noise_std: 1.8
+    rest_policy: "keep_all"
+  mild:
+    thresholds:
+      delta_abs_min: 0.0005
+      k_noise_std: 2.5
+    rest_policy: "keep_all"
+
+fs_primary_mode: "moderate"
 
 xgb_fs_params:
   max_depth: 5
