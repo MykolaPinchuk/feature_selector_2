@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -12,27 +11,13 @@ import pandas as pd
 import yaml
 
 from fs_xgb.data import load_dataset
+from fs_xgb.eval.reporting import write_eda_report, write_experiment_report
 from fs_xgb.fs_logic import FeatureSelectionResult, run_feature_selection
 from fs_xgb.metrics import compute_classification_metrics
 from fs_xgb.models import predict_proba, train_xgb_classifier
 from fs_xgb.preprocessing import FeatureEngineer, FeatureEngineerConfig, TargetEncodingConfig
 from fs_xgb.splitting import RandomSplitConfig, create_random_splits
-
-
-@dataclass
-class ModelResult:
-    name: str
-    feature_names: List[str]
-    metrics: Dict[str, Dict[str, float]]
-    selected: bool = False
-
-
-@dataclass
-class ExperimentResult:
-    dataset: str
-    run_dir: Path
-    fs_result: FeatureSelectionResult
-    models: List[ModelResult]
+from fs_xgb.types import ExperimentResult, ModelResult
 
 
 def _deep_update(base: Dict, updates: Dict) -> Dict:
@@ -164,7 +149,8 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
     dataset_name = config["dataset"]
     dataset_path = config.get("dataset_path")
     data_path = Path(dataset_path) if dataset_path else None
-    X, y, _ = load_dataset(dataset_name, data_path)
+    X, y, metadata = load_dataset(dataset_name, data_path)
+    write_eda_report(dataset_name, X, y, metadata, results_root)
 
     splits_cfg = config.get("splits", {})
     split_config = RandomSplitConfig(
@@ -188,10 +174,12 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
 
     model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
     run_dir = _persist_results(dataset_name, config, fs_result, model_results, results_root)
-
-    return ExperimentResult(
+    experiment_result = ExperimentResult(
         dataset=dataset_name,
         run_dir=run_dir,
         fs_result=fs_result,
         models=model_results,
     )
+    write_experiment_report(experiment_result, config)
+
+    return experiment_result

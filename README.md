@@ -71,8 +71,10 @@ After the run completes you can inspect:
 - `permutation_fi.csv`: ΔPR-AUC per permuted feature aggregated across FS models.
 - `shap_importance.csv`: Mean |SHAP| values used for permutation triage.
 - `features.json`: Lists of kept vs dropped features.
+- `report.md`: Human-readable Markdown summary with metric tables and top-feature breakdowns.
 - `config.yaml`: The resolved configuration (defaults + overrides) used for the run.
 
+A dataset-specific EDA summary is written (or refreshed) at `results/<dataset>/eda.md`, covering target distribution, per-column missingness, and numeric stats. This lets you review the dataset once and keep it alongside experiment outputs.
 ## Project Layout
 
 ```
