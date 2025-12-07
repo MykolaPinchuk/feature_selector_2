@@ -45,7 +45,8 @@ This document tracks the multi-iteration plan for the Feature Selector beyond It
 
 ## Iteration 6
 
-Try Santander dataset
+- Try Santander dataset
+- For permutation FI, add stat test against <=0 null hypothesis.
 
 ## Iteration 7 
 

@@ -165,6 +165,10 @@ After the run completes you can inspect:
 
 A dataset-specific EDA summary is written (or refreshed) at `results/<dataset>/eda.md`, covering target distribution, per-column missingness, and numeric stats. This lets you review the dataset once and keep it alongside experiment outputs.
 
+### Agent Onboarding
+
+If you are a new agent picking up this repository, start with the curated checklist in `docs/agent_onboarding.md` instead of reading every file. It lists the minimum set of docs/code to scan so you can get productive quickly without burning tokens on old logs or results.
+
 ### Feature-Selection Modes
 
 `fs_xgb/config/default_config.yaml` defines three FS aggressiveness profiles:

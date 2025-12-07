@@ -17,6 +17,7 @@ To change repo-specific notes, edit local_context_enrichments/local_agents.md in
 - Do not touch git except for .gitignore. Human will handle git workflow. Make sure that large files are added to .gitignore.
 - You can use all except one vCPUs/threads available at this machine.
 - Use logs/agents/ dir to store any logs related to agent runs. After completing each task/iteration, summarize the key steps taken by the agent and store them in a markdown file in the agent_logs dir. Specify which agent and model were used as well as exact timestamps.
+- When discussing with human plan and the next steps, be honest and critical. Human usually lacks very deep understanding of low-level details of what we are about to build, and has a limited ability to grasp future consequences of the decisions we are about to make. Feel free to push back and provide better suggestions. If human asks to do something which does not seem to make sense, stop and explain to human why this is a bad idea before proceeding.
 
 ---
 
