@@ -1,0 +1,76 @@
+dataset: "brfss_2015"
+target: "is_diabetic"
+metric: "prauc"
+
+splits:
+  strategy: "chronological"
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+feature_engineering:
+  target_encoding:
+    n_splits: 5
+    smoothing: 0.0
+    min_category_size: 0
+    strategy: "naive"
+
+fs:
+  holdout_fraction: 0.25
+  n_fs_models: 2
+  topk_shap: 80
+  fs_eval:
+    neg_pos_ratio: 5
+  thresholds:
+    delta_abs_min: 0.0015
+    k_noise_std: 1.2
+  rest_policy: "keep_all"
+  rest_min_shap_rank: 60
+  drop_negative_features: true
+  overfit_filter:
+    enabled: true
+    max_shap_rank: 60
+    delta_max: 0.0005
+    delta_std_max: 0.002
+    action: "drop"
+  gain_overfit_filter:
+    enabled: true
+    max_gain_rank: 60
+    delta_max: 0.0005
+    delta_std_max: 0.002
+    action: "drop"
+
+fs_modes: {}
+fs_primary_mode: "moderate"
+
+fs_search:
+  mode: "frontier"
+  frontier:
+    delta_abs_min_values: [0.0, 0.0005, 0.001, 0.0015, 0.002, 0.0025, 0.0035, 0.005, 0.007]
+    k_noise_std_values: [0.0, 0.4, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5]
+    rest_policies: ["keep_all", "drop_all", "keep_above_min_shap"]
+    drop_negative_options: [true, false]
+    max_candidates: 30
+
+xgb_fs_params:
+  max_depth: 6
+  min_child_weight: 15
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 1.5
+  eta: 0.1
+  n_estimators: 350
+  early_stopping_rounds: 50
+
+xgb_final_params:
+  max_depth: 6
+  min_child_weight: 18
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 2.0
+  eta: 0.08
+  n_estimators: 1500
+  early_stopping_rounds: 75
+
+selection:
+  val_tolerance_relative: 0.015

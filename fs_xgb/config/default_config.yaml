@@ -94,3 +94,4 @@ xgb_final_params:
 selection:
   val_tolerance_relative: 0.01
   max_final_feature_sets: 3
+  gap_penalty_weight: 0.3

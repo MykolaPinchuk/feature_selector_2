@@ -15,6 +15,7 @@ import yaml
 
 from fs_xgb.data import load_dataset
 from fs_xgb.eval.reporting import write_eda_report, write_experiment_report
+from fs_xgb.eval.plots import generate_frontier_plots
 from fs_xgb.fs_logic import (
     FeatureImportanceArtifacts,
     FeatureSelectionResult,
@@ -138,6 +139,17 @@ def _evaluate_model(model, X_dict: Dict[str, pd.DataFrame], y_dict: Dict[str, pd
     return metrics
 
 
+def _gap_penalized_score(train_pr: float, val_pr: float, weight: float) -> float:
+    if math.isnan(val_pr):
+        return float("-inf")
+    if math.isnan(train_pr):
+        train_pr = val_pr
+    gap = train_pr - val_pr
+    if math.isnan(gap):
+        gap = 0.0
+    return val_pr - weight * gap
+
+
 def _train_and_eval_models(
     config: Dict,
     X_splits: Dict[str, pd.DataFrame],
@@ -148,6 +160,7 @@ def _train_and_eval_models(
     params = config.get("xgb_final_params", {})
     selection_cfg = config.get("selection", {})
     tolerance = selection_cfg.get("val_tolerance_relative", 0.01)
+    gap_weight = selection_cfg.get("gap_penalty_weight", 0.0)
     feature_sets = []
     if include_all_features:
         feature_sets.append(("all_features", list(X_splits["train"].columns)))
@@ -181,7 +194,13 @@ def _train_and_eval_models(
     best_val = max(val_scores)
     cutoff = (1 - tolerance) * best_val
     eligible = [m for m in models if m.metrics["val"]["pr_auc"] >= cutoff]
-    eligible.sort(key=lambda m: (len(m.feature_names), -m.metrics["val"]["pr_auc"]))
+    eligible.sort(
+        key=lambda m: (
+            -_gap_penalized_score(m.metrics["train"]["pr_auc"], m.metrics["val"]["pr_auc"], gap_weight),
+            len(m.feature_names),
+            -m.metrics["val"]["pr_auc"],
+        )
+    )
     selected = eligible[0]
     for model in models:
         model.selected = model is selected
@@ -247,6 +266,8 @@ def _run_profile_modes(
 ) -> Tuple[Dict[str, ModeResult], str, Optional[List[Dict]]]:
     mode_configs = _build_fs_mode_configs(config)
     mode_results: Dict[str, ModeResult] = {}
+    selection_cfg = config.get("selection", {})
+    gap_weight = selection_cfg.get("gap_penalty_weight", 0.0)
     for mode_name, fs_mode_cfg in mode_configs.items():
         fs_config = copy.deepcopy(fs_mode_cfg)
         fs_config["xgb_fs_params"] = dict(config.get("xgb_fs_params", {}))
@@ -254,6 +275,16 @@ def _run_profile_modes(
             X_splits["train"], y_splits["train"], fs_config, random_state=split_config.random_state
         )
         model_results = _train_and_eval_models(config, X_splits, y_splits, fs_result)
+        fs_model = next((m for m in model_results if m.name == "fs_filtered"), None)
+        gap_score = (
+            _gap_penalized_score(
+                fs_model.metrics["train"]["pr_auc"],
+                fs_model.metrics["val"]["pr_auc"],
+                gap_weight,
+            )
+            if fs_model
+            else float("nan")
+        )
         mode_metadata = {
             "shap_overfit_features": fs_result.shap_overfit_features,
             "shap_overfit_count": len(fs_result.shap_overfit_features),
@@ -261,6 +292,7 @@ def _run_profile_modes(
             "gain_overfit_count": len(fs_result.gain_overfit_features),
             "overfit_flagged_features": fs_result.overfit_features,
             "overfit_flagged_count": len(fs_result.overfit_features),
+            "gap_penalty_score": gap_score,
         }
         mode_results[mode_name] = ModeResult(fs_result=fs_result, models=model_results, metadata=mode_metadata)
 
@@ -277,6 +309,7 @@ def _run_profile_modes(
 
 def _select_frontier_primary(mode_results: Dict[str, ModeResult], selection_cfg: Dict) -> str:
     tolerance = selection_cfg.get("val_tolerance_relative", 0.01)
+    gap_weight = selection_cfg.get("gap_penalty_weight", 0.0)
     ranked = []
     for mode_name, mode_result in mode_results.items():
         fs_model = next((m for m in mode_result.models if m.name == "fs_filtered"), None)
@@ -287,12 +320,14 @@ def _select_frontier_primary(mode_results: Dict[str, ModeResult], selection_cfg:
         gap = train_score - val_score
         if math.isnan(gap):
             gap = float("inf")
+        score = _gap_penalized_score(train_score, val_score, gap_weight)
         ranked.append(
             {
                 "mode": mode_name,
                 "val": val_score,
                 "gap": gap,
                 "feature_count": len(fs_model.feature_names),
+                "score": score,
             }
         )
     if not ranked:
@@ -300,7 +335,14 @@ def _select_frontier_primary(mode_results: Dict[str, ModeResult], selection_cfg:
     best_val = max(row["val"] for row in ranked)
     cutoff = (1 - tolerance) * best_val
     eligible = [row for row in ranked if row["val"] >= cutoff]
-    eligible.sort(key=lambda row: (row["feature_count"], row["gap"], -row["val"], row["mode"]))
+    eligible.sort(
+        key=lambda row: (
+            -row["score"],
+            row["feature_count"],
+            -row["val"],
+            row["mode"],
+        )
+    )
     return eligible[0]["mode"]
 
 
@@ -316,6 +358,8 @@ def _run_frontier_mode(
         X_splits["train"], y_splits["train"], base_fs_config, random_state=split_config.random_state
     )
     frontier_cfg = config.get("fs_search", {}).get("frontier", {})
+    selection_cfg = config.get("selection", {})
+    gap_weight = selection_cfg.get("gap_penalty_weight", 0.0)
     grid = _frontier_param_grid(base_fs_config, frontier_cfg)
     max_candidates = frontier_cfg.get("max_candidates")
     if not max_candidates or max_candidates <= 0:
@@ -372,14 +416,26 @@ def _run_frontier_mode(
             continue
         models = _train_and_eval_models(config, X_splits, y_splits, fs_result)
         mode_name = f"frontier_{len(mode_results) + 1}"
-        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=models, metadata=dict(metadata))
-        feature_to_mode[feature_key] = mode_name
         fs_model = next((m for m in models if m.name == "fs_filtered"), None)
+        gap_score = (
+            _gap_penalized_score(
+                fs_model.metrics["train"]["pr_auc"],
+                fs_model.metrics["val"]["pr_auc"],
+                gap_weight,
+            )
+            if fs_model
+            else float("nan")
+        )
+        metadata_with_score = dict(metadata)
+        metadata_with_score["gap_penalty_score"] = gap_score
+        mode_results[mode_name] = ModeResult(fs_result=fs_result, models=models, metadata=metadata_with_score)
+        feature_to_mode[feature_key] = mode_name
+        metadata_with_metrics = dict(metadata_with_score)
         frontier_log.append(
             {
                 "candidate_index": idx,
                 "mode": mode_name,
-                **metadata,
+                **metadata_with_metrics,
                 "is_duplicate": False,
                 "skipped_due_to_limit": False,
                 "fs_filtered_metrics": fs_model.metrics if fs_model else None,
@@ -440,6 +496,8 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
         mode_results, primary_mode, frontier_log = _run_profile_modes(config, X_splits, y_splits, split_config)
 
     run_dir = _persist_results(dataset_name, config, mode_results, primary_mode, results_root, frontier_log)
+    if frontier_log:
+        generate_frontier_plots(frontier_log, run_dir, config.get("selection", {}))
     experiment_result = ExperimentResult(
         dataset=dataset_name,
         run_dir=run_dir,

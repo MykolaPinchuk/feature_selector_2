@@ -153,7 +153,7 @@ python -m fs_xgb.cli.main \
   --results-dir results
 ```
 
-Swap `student_grades_frontier.yaml` with `census_income_frontier.yaml` (full dataset) or `census_income_balanced_frontier.yaml` (balanced subset) to run the comprehensive search on Census Income.
+Swap `student_grades_frontier.yaml` with `census_income_frontier.yaml` (full dataset), `census_income_balanced_frontier.yaml` (balanced subset), or `brfss_2015_frontier.yaml` (diabetes target) to run the comprehensive search on those datasets.
 
 After the run completes you can inspect:
 

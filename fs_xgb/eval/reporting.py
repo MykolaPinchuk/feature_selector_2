@@ -107,6 +107,17 @@ def build_metrics_table(models: List[ModelResult]) -> str:
     return _markdown_table(headers, rows)
 
 
+def _gap_penalized_score(train_pr: float, val_pr: float, weight: float) -> float:
+    if math.isnan(val_pr):
+        return float("-inf")
+    if math.isnan(train_pr):
+        train_pr = val_pr
+    gap = train_pr - val_pr
+    if math.isnan(gap):
+        gap = 0.0
+    return val_pr - weight * gap
+
+
 def build_feature_summary(fs_result: FeatureSelectionResult) -> str:
     kept = len(fs_result.kept_features)
     dropped = len(fs_result.dropped_features)
@@ -216,6 +227,7 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
     primary = result.mode_results[primary_mode]
     xgb_params = config.get("xgb_final_params", {})
     hyperparam_summary = ", ".join(f"{k}={v}" for k, v in sorted(xgb_params.items())) or "Default XGBoost parameters"
+    gap_weight = config.get("selection", {}).get("gap_penalty_weight", 0.0)
     lines = [
         f"# Feature Selection Report – {dataset}",
         f"- Run timestamp: `{timestamp}`",
@@ -228,6 +240,21 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         "_Rest policy_: governs what happens to features outside the permutation-evaluated set (keep/drop/SHAP rank filter).",
         build_mode_summary_table(result, config),
         "",
+        f"## Mode Rankings (Val PR-AUC − {gap_weight} × gap)",
+        build_mode_ranking_table(result, config),
+        "",
+    ]
+    frontier_plot = result.run_dir / "frontier_curve.png"
+    train_val_plot = result.run_dir / "train_val_vs_features.png"
+    if frontier_plot.exists() and train_val_plot.exists():
+        lines.extend(
+            [
+                f"_Plots saved to `{frontier_plot.name}` and `{train_val_plot.name}`._",
+                "",
+            ]
+        )
+    lines.extend(
+        [
         "## Model Performance",
         build_metrics_table(primary.models),
         "",
@@ -247,6 +274,10 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
     ]
 
     other_modes = [name for name in result.mode_results.keys() if name != primary_mode]
+    other_modes.sort(
+        key=lambda name: _mode_gap_score(result.mode_results[name], gap_weight),
+        reverse=True,
+    )
     if other_modes:
         lines.append("")
         lines.append("## Additional Feature-Selection Modes")
@@ -289,6 +320,74 @@ def build_feature_list_table(fs_result: FeatureSelectionResult) -> str:
     )
 
 
+def build_mode_ranking_table(result: ExperimentResult, config: dict) -> str:
+    weight = config.get("selection", {}).get("gap_penalty_weight", 0.0)
+    entries = []
+    primary_mode = result.mode_results[result.primary_mode]
+    baseline_model = next((m for m in primary_mode.models if m.name == "all_features"), None)
+    if baseline_model:
+        train_pr = baseline_model.metrics["train"]["pr_auc"]
+        val_pr = baseline_model.metrics["val"]["pr_auc"]
+        entries.append(
+            {
+                "label": "all_features (baseline)",
+                "count": len(baseline_model.feature_names),
+                "train": train_pr,
+                "val": val_pr,
+                "gap": train_pr - val_pr,
+                "score": _gap_penalized_score(train_pr, val_pr, weight),
+            }
+        )
+    for mode_name, mode_result in result.mode_results.items():
+        fs_model = next((m for m in mode_result.models if m.name == "fs_filtered"), None)
+        if not fs_model:
+            continue
+        train_pr = fs_model.metrics["train"]["pr_auc"]
+        val_pr = fs_model.metrics["val"]["pr_auc"]
+        entries.append(
+            {
+                "label": mode_name,
+                "count": len(fs_model.feature_names),
+                "train": train_pr,
+                "val": val_pr,
+                "gap": train_pr - val_pr,
+                "score": _gap_penalized_score(train_pr, val_pr, weight),
+            }
+        )
+    entries.sort(key=lambda entry: entry["score"], reverse=True)
+    rows = [
+        [
+            entry["label"],
+            entry["count"],
+            _format_float(entry["train"]),
+            _format_float(entry["val"]),
+            _format_float(entry["gap"]),
+            _format_float(entry["score"]),
+        ]
+        for entry in entries
+    ]
+    headers = [
+        "Mode / Feature set",
+        "Feature count",
+        "Train PR-AUC",
+        "Val PR-AUC",
+        "Gap",
+        f"Penalty (w={weight})",
+    ]
+    return _markdown_table(headers, rows)
+
+
+def _mode_gap_score(mode_result: ModeResult, weight: float) -> float:
+    fs_model = next((m for m in mode_result.models if m.name == "fs_filtered"), None)
+    if not fs_model:
+        return float("-inf")
+    return _gap_penalized_score(
+        fs_model.metrics["train"]["pr_auc"],
+        fs_model.metrics["val"]["pr_auc"],
+        weight,
+    )
+
+
 def write_experiment_report(result: ExperimentResult, config: dict) -> Path:
     markdown = generate_experiment_report_markdown(result, config)
     report_path = result.run_dir / "report.md"
@@ -319,6 +418,8 @@ def _resolve_mode_configs(config: dict) -> Dict[str, Dict]:
 
 def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
     mode_configs = _resolve_mode_configs(config)
+    selection_cfg = config.get("selection", {})
+    gap_weight = selection_cfg.get("gap_penalty_weight", 0.0)
     rows = []
     for mode_name, mode_result in result.mode_results.items():
         cfg = mode_configs.get(mode_name, {})
@@ -332,6 +433,7 @@ def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
         train_pr = fs_filtered.metrics["train"]["pr_auc"] if fs_filtered else float("nan")
         val_pr = fs_filtered.metrics["val"]["pr_auc"] if fs_filtered else float("nan")
         test_pr = fs_filtered.metrics["test"]["pr_auc"] if fs_filtered else float("nan")
+        penalty_score = _gap_penalized_score(train_pr, val_pr, gap_weight)
         rows.append(
             [
                 f"{mode_name} {'(primary)' if mode_name == result.primary_mode else ''}".strip(),
@@ -343,6 +445,7 @@ def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
                 _format_float(train_pr),
                 _format_float(val_pr),
                 _format_float(test_pr),
+                _format_float(penalty_score),
             ]
         )
     headers = [
@@ -355,6 +458,7 @@ def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
         "Train PR-AUC",
         "Val PR-AUC",
         "Test PR-AUC",
+        f"Penalty (w={gap_weight})",
     ]
     return _markdown_table(headers, rows)
 
