@@ -43,6 +43,27 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
    ```
 
    All Census configs set `splits.strategy: "chronological"`, which means TRAIN consumes the earliest year (1994) and VAL/TEST begin with 1995 to enforce out-of-time evaluation.
+
+   _BRFSS 2015 (CDC)_:
+
+   ```bash
+   mkdir -p data/raw/brfss_2015
+   curl -L -o data/raw/brfss_2015/LLCP2015XPT.zip \
+     https://www.cdc.gov/brfss/annual_data/2015/files/LLCP2015XPT.zip
+   unzip -o data/raw/brfss_2015/LLCP2015XPT.zip -d data/raw/brfss_2015
+   # Optional but recommended for human-friendly column descriptions
+   curl -L -o data/raw/brfss_2015/SASOUT15_LLCP.SAS \
+     https://www.cdc.gov/brfss/annual_data/2015/files/SASOUT15_LLCP.SAS
+
+   python scripts/prepare_brfss_2015.py \
+     --source data/raw/brfss_2015/LLCP2015.XPT \
+     --sas-labels data/raw/brfss_2015/SASOUT15_LLCP.SAS \
+     --output data/raw/brfss_2015 \
+     --sample-rows 60000
+   ```
+
+   The prep script emits `brfss_2015.parquet` (full dataset), `brfss_2015_sample.parquet` (faster experiments), and a `variable_descriptions.csv` that combines XPT metadata with SAS label statements.
+
 3. **Quick smoke test**
 
    ```bash
@@ -74,6 +95,8 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
   - Smoothing toward the global target rate.
   - A minimum category frequency threshold to default rare categories back to the global prior.
 
+  Set `TargetEncodingConfig.strategy` to `"naive"` to disable smoothing and frequency thresholds, which intentionally overfits high-cardinality columns so the FS pipeline can stress-test its ability to drop them. Keeping the default `"smoothed"` mode preserves the original regularized behavior.
+
 All encoders live under `fs_xgb.preprocessing` and can be composed via `FeatureEngineer` for TRAIN/VAL/TEST splits.
 
 ## Running Experiments
@@ -101,6 +124,22 @@ python -m fs_xgb.cli.main \
 ```bash
 python -m fs_xgb.cli.main \
   --config fs_xgb/experiments/configs/census_income_balanced.yaml \
+  --results-dir results
+```
+
+**BRFSS 2015 (full dataset):**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/brfss_2015.yaml \
+  --results-dir results
+```
+
+**BRFSS 2015 sample (fast smoke test):**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/brfss_2015_sample.yaml \
   --results-dir results
 ```
 

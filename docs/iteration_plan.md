@@ -38,7 +38,18 @@ This document tracks the multi-iteration plan for the Feature Selector beyond It
   - ☐ Explore additional pre-filters for FS pipeline if runtime pressure grows.
 
 
-## Iterations 5+
+## Iteration 5 (in progress)
+
+- ✅ For previously added datasets, swap the target encoder to the new `strategy="naive"` mode (no smoothing / frequency thresholding) so these columns overfit and provide a stronger signal for the FS heuristics.
+- ✅ Add BRFSS 2015 (CDC) dataset support: loader + prep script, configs (full + sample), README instructions, and EDA/reporting artifacts for the diabetes target.
+
+## Iterations 6-8
+
+- Add 3more datasets. See 12/6 chatgpt chat.
+
+
+
+## Iterations 10+
 - Benchmark the framework (fast + comprehensive + future greedy mode) against established FS approaches (RFE, Boruta, filter-based methods, and more). This will require:
   - Shared split definitions and evaluation contracts so external algorithms can plug in.
   - Runtime tracking to compare cost vs quality.

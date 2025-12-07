@@ -11,6 +11,12 @@ splits:
   val_size: 0.2
   random_state: 42
 
+feature_engineering:
+  target_encoding:
+    strategy: "naive"
+    smoothing: 0.0
+    min_category_size: 0
+
 fs:
   holdout_fraction: 0.25
   n_fs_models: 3

@@ -1,10 +1,9 @@
-dataset: "census_income"
-dataset_path: "data/raw/census_income_kdd"
-target: "is_high_income"
+dataset: "brfss_2015"
+target: "is_diabetic"
 metric: "prauc"
 
 splits:
-  strategy: "chronological"
+  strategy: "random"
   test_size: 0.2
   val_size: 0.2
   random_state: 42
@@ -19,12 +18,12 @@ feature_engineering:
 fs:
   holdout_fraction: 0.25
   n_fs_models: 2
-  topk_shap: 60
+  topk_shap: 80
   fs_eval:
-    neg_pos_ratio: 10
+    neg_pos_ratio: 5
   thresholds:
-    delta_abs_min: 0.0005
-    k_noise_std: 1.5
+    delta_abs_min: 0.0015
+    k_noise_std: 1.2
   rest_policy: "keep_all"
   drop_negative_features: true
 
@@ -37,12 +36,12 @@ fs_modes:
   moderate:
     thresholds:
       delta_abs_min: 0.0015
-      k_noise_std: 1.5
+      k_noise_std: 1.2
     rest_policy: "keep_all"
   mild:
     thresholds:
-      delta_abs_min: 0.0004
-      k_noise_std: 2.5
+      delta_abs_min: 0.0005
+      k_noise_std: 0.8
     rest_policy: "keep_all"
     drop_negative_features: false
 
@@ -57,20 +56,20 @@ xgb_fs_params:
   subsample: 0.8
   colsample_bytree: 0.8
   lambda: 1.5
-  eta: 0.12
-  n_estimators: 400
+  eta: 0.1
+  n_estimators: 350
   early_stopping_rounds: 50
 
 xgb_final_params:
-  max_depth: 7
-  min_child_weight: 20
+  max_depth: 6
+  min_child_weight: 18
   subsample: 0.8
   colsample_bytree: 0.8
-  lambda: 2.5
-  eta: 0.07
+  lambda: 2.0
+  eta: 0.08
   n_estimators: 1500
   early_stopping_rounds: 75
 
 selection:
-  val_tolerance_relative: 0.02
+  val_tolerance_relative: 0.015
   max_final_feature_sets: 3

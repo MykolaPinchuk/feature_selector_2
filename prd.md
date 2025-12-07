@@ -561,8 +561,11 @@ https://www.kaggle.com/datasets/atifmasih/factors-affecting-university-student-g
 2. Census-Income (KDD) – UCI 
 https://archive.ics.uci.edu/dataset/117/census%2Bincome%2Bkdd?utm_source=chatgpt.com
 
-3. BRFSS 2015 (CDC)
-https://www.cdc.gov/brfss/annual_data/annual_2015.html?utm_source=chatgpt.com
+3. BRFSS 2015 (CDC) – https://www.cdc.gov/brfss/annual_data/annual_2015.html?utm_source=chatgpt.com (predict `is_diabetic` from the DIABETE3 survey response with ~330 health/lifestyle variables)
+
+4. Santander customer satisfaction
+
+
 
 
 All problems should be framed as imbalanced binary classification. So some transformations of the target from the original datasets may be needed.
@@ -628,4 +631,3 @@ For each experiment:
   * Micro/macro PR-AUC and class-conditional FS.
 * Support for non-XGB models (LightGBM, CatBoost).
 * Automated hyperparameter tuning integrated with FS.
-

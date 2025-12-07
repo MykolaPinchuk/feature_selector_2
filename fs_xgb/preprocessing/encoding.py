@@ -17,6 +17,7 @@ class TargetEncodingConfig:
     smoothing: float = 10.0
     min_category_size: int = 30
     random_state: int = 42
+    strategy: str = "smoothed"  # "smoothed" or "naive"
 
 
 class BinaryCategoryEncoder:
@@ -35,7 +36,7 @@ class BinaryCategoryEncoder:
         if len(categories) != 2:
             raise ValueError(f"Expected exactly 2 categories, found {len(categories)} for '{series.name}'.")
 
-        means = observed.groupby("feature")["target"].mean()
+        means = observed.groupby("feature", observed=False)["target"].mean()
         self.positive_category = means.idxmax()
         neg_candidates = [cat for cat in categories if cat != self.positive_category]
         self.negative_category = neg_candidates[0]
@@ -64,10 +65,17 @@ class TargetEncoder:
 
     def _build_mapping(self, series: pd.Series, target: pd.Series) -> Dict[str, float]:
         combined = pd.DataFrame({"feature": self._normalize(series), "target": target})
-        grouped = combined.groupby("feature")["target"].agg(["mean", "count"])
-        lambda_ = grouped["count"] / (grouped["count"] + self.config.smoothing)
-        encoding = lambda_ * grouped["mean"] + (1 - lambda_) * self.global_mean
-        encoding[grouped["count"] < self.config.min_category_size] = self.global_mean
+        grouped = combined.groupby("feature", observed=False)["target"].agg(["mean", "count"])
+        strategy = (self.config.strategy or "smoothed").lower()
+        if strategy not in {"smoothed", "naive"}:
+            raise ValueError("TargetEncoder strategy must be 'smoothed' or 'naive'.")
+        if strategy == "naive":
+            encoding = grouped["mean"].copy()
+        else:
+            lambda_ = grouped["count"] / (grouped["count"] + self.config.smoothing)
+            encoding = lambda_ * grouped["mean"] + (1 - lambda_) * self.global_mean
+            if self.config.min_category_size > 0:
+                encoding[grouped["count"] < self.config.min_category_size] = self.global_mean
         return encoding.to_dict()
 
     def fit_transform(self, series: pd.Series, target: pd.Series) -> pd.Series:
