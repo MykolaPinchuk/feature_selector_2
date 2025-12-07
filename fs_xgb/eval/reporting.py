@@ -5,10 +5,11 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
 import math
+import json
 
 from fs_xgb.fs_logic import FeatureSelectionResult
 from fs_xgb.types import ExperimentResult, ModeResult, ModelResult
@@ -99,11 +100,22 @@ def build_metrics_table(models: List[ModelResult]) -> str:
                 "yes" if model.selected else "no",
                 len(model.feature_names),
                 _format_float(model.metrics["train"]["pr_auc"]),
+                _format_float(model.metrics["train"]["roc_auc"]),
                 _format_float(model.metrics["val"]["pr_auc"]),
+                _format_float(model.metrics["val"]["roc_auc"]),
                 _format_float(model.metrics["test"]["pr_auc"]),
             ]
         )
-    headers = ["Model", "Selected", "Feature Count", "Train PR-AUC", "Val PR-AUC", "Test PR-AUC"]
+    headers = [
+        "Model",
+        "Selected",
+        "Feature Count",
+        "Train PR-AUC",
+        "Train ROC-AUC",
+        "Val PR-AUC",
+        "Val ROC-AUC",
+        "Test PR-AUC",
+    ]
     return _markdown_table(headers, rows)
 
 
@@ -137,10 +149,51 @@ def build_feature_summary(fs_result: FeatureSelectionResult) -> str:
     return "\n".join(lines)
 
 
-def build_overfit_section(features: List[str]) -> str:
+def _build_overfit_table(
+    fs_result: FeatureSelectionResult,
+    feature_descriptions: Dict[str, str],
+    kind: str,
+    top_n: int = 20,
+) -> str:
+    if kind == "shap":
+        features = fs_result.shap_overfit_features
+        ranking_series = fs_result.shap_importance
+        metric_label = "Mean abs(SHAP)"
+    else:
+        features = fs_result.gain_overfit_features
+        ranking_series = fs_result.gain_importance
+        metric_label = "Mean gain"
     if not features:
         return "_None._"
-    return _markdown_table(["Feature"], [[feature] for feature in features])
+    perm_lookup = fs_result.permutation_table.set_index("feature")
+    rows = []
+    for feature in features:
+        delta_mean = float(perm_lookup.at[feature, "delta_mean"]) if feature in perm_lookup.index else float("nan")
+        delta_std = float(perm_lookup.at[feature, "delta_std"]) if feature in perm_lookup.index else float("nan")
+        metric_value = float(ranking_series.get(feature, float("nan")))
+        rows.append(
+            [
+                feature,
+                feature_descriptions.get(feature, ""),
+                delta_mean,
+                delta_std,
+                metric_value,
+            ]
+        )
+    rows.sort(key=lambda row: (abs(row[4]) if not math.isnan(row[4]) else -float("inf")), reverse=True)
+    rows = rows[:top_n]
+    formatted = [
+        [
+            feature,
+            description,
+            _format_float(delta_mean),
+            _format_float(delta_std),
+            _format_float(metric_value),
+        ]
+        for feature, description, delta_mean, delta_std, metric_value in rows
+    ]
+    headers = ["Feature", "Description", "ΔPR-AUC (mean)", "ΔPR-AUC (std)", metric_label]
+    return _markdown_table(headers, formatted)
 
 
 def build_top_tables(fs_result: FeatureSelectionResult, top_n: int = 15) -> str:
@@ -158,7 +211,51 @@ def build_top_tables(fs_result: FeatureSelectionResult, top_n: int = 15) -> str:
     return f"### Top Permutation FI (ΔPR-AUC)\n\n{perm_table}\n\n### Top SHAP Importance\n\n{shap_table}"
 
 
-def build_feature_details_table(fs_result: FeatureSelectionResult) -> str:
+def build_top_kept_features_table(
+    fs_result: FeatureSelectionResult, feature_descriptions: Dict[str, str], top_n: int = 20
+) -> str:
+    perm_lookup = fs_result.permutation_table.set_index("feature")
+    rows = []
+    for feature in fs_result.kept_features:
+        delta_mean = float(perm_lookup.at[feature, "delta_mean"]) if feature in perm_lookup.index else float("nan")
+        delta_std = float(perm_lookup.at[feature, "delta_std"]) if feature in perm_lookup.index else float("nan")
+        shap_val = float(fs_result.shap_importance.get(feature, float("nan")))
+        gain_val = float(fs_result.gain_importance.get(feature, float("nan")))
+        rows.append(
+            [
+                feature,
+                feature_descriptions.get(feature, ""),
+                delta_mean,
+                delta_std,
+                shap_val,
+                gain_val,
+            ]
+        )
+    rows.sort(key=lambda row: (row[2] if not math.isnan(row[2]) else -float("inf")), reverse=True)
+    rows = rows[:top_n]
+    formatted = [
+        [
+            feature,
+            description,
+            _format_float(delta_mean),
+            _format_float(delta_std),
+            _format_float(shap_val),
+            _format_float(gain_val),
+        ]
+        for feature, description, delta_mean, delta_std, shap_val, gain_val in rows
+    ]
+    headers = [
+        "Feature",
+        "Description",
+        "ΔPR-AUC (mean)",
+        "ΔPR-AUC (std)",
+        "Mean abs(SHAP)",
+        "Mean gain",
+    ]
+    return _markdown_table(headers, formatted)
+
+
+def build_feature_details_table(fs_result: FeatureSelectionResult, feature_descriptions: Dict[str, str]) -> str:
     """Build a comprehensive table listing FI metrics for all features."""
 
     perm_table = fs_result.permutation_table.set_index("feature")
@@ -195,6 +292,7 @@ def build_feature_details_table(fs_result: FeatureSelectionResult) -> str:
         rows.append(
             [
                 feature,
+                feature_descriptions.get(feature, ""),
                 "yes" if kept else "no",
                 "yes" if permuted else "no",
                 _fmt(delta_mean),
@@ -208,6 +306,7 @@ def build_feature_details_table(fs_result: FeatureSelectionResult) -> str:
 
     headers = [
         "Feature",
+        "Description",
         "Included",
         "Permuted",
         "ΔPR-AUC (mean)",
@@ -228,6 +327,8 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
     xgb_params = config.get("xgb_final_params", {})
     hyperparam_summary = ", ".join(f"{k}={v}" for k, v in sorted(xgb_params.items())) or "Default XGBoost parameters"
     gap_weight = config.get("selection", {}).get("gap_penalty_weight", 0.0)
+    feature_descriptions = _load_feature_descriptions(config, dataset)
+    total_features = len(primary.fs_result.kept_features) + len(primary.fs_result.dropped_features)
     lines = [
         f"# Feature Selection Report – {dataset}",
         f"- Run timestamp: `{timestamp}`",
@@ -244,6 +345,8 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         build_mode_ranking_table(result, config),
         "",
     ]
+    lines.append(_build_runtime_section(result, config, total_features))
+    lines.append("")
     frontier_plot = result.run_dir / "frontier_curve.png"
     train_val_plot = result.run_dir / "train_val_vs_features.png"
     if frontier_plot.exists() and train_val_plot.exists():
@@ -255,55 +358,35 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         )
     lines.extend(
         [
-        "## Model Performance",
-        build_metrics_table(primary.models),
-        "",
-        "## Feature Summary",
-        build_feature_summary(primary.fs_result),
-        "",
-        "## SHAP vs Permutation Overfit Flags",
-        build_overfit_section(primary.fs_result.shap_overfit_features),
-        "",
-        "## Gain vs Permutation Overfit Flags",
-        build_overfit_section(primary.fs_result.gain_overfit_features),
-        "",
-        build_top_tables(primary.fs_result),
-        "",
-        "## Full Feature Table",
-        build_feature_details_table(primary.fs_result),
-    ]
+            "## Model Performance",
+            build_metrics_table(primary.models),
+            "",
+            "## Feature Summary",
+            build_feature_summary(primary.fs_result),
+            "",
+            "## SHAP vs Permutation Overfit Flags",
+            _build_overfit_table(primary.fs_result, feature_descriptions, kind="shap"),
+            "",
+            "## Gain vs Permutation Overfit Flags",
+            _build_overfit_table(primary.fs_result, feature_descriptions, kind="gain"),
+            "",
+            build_top_tables(primary.fs_result),
+            "",
+            "## Top Kept Features by Permutation FI",
+            build_top_kept_features_table(primary.fs_result, feature_descriptions),
+            "",
+            "## Full Feature Table",
+            build_feature_details_table(primary.fs_result, feature_descriptions),
+        ]
+    )
 
     other_modes = [name for name in result.mode_results.keys() if name != primary_mode]
-    other_modes.sort(
-        key=lambda name: _mode_gap_score(result.mode_results[name], gap_weight),
-        reverse=True,
-    )
     if other_modes:
         lines.append("")
         lines.append("## Additional Feature-Selection Modes")
-    for mode_name in other_modes:
-        mode_result = result.mode_results[mode_name]
-        lines.append(f"### Mode: {mode_name}")
-        if mode_result.identical_to_primary:
-            lines.append("_Identical to primary mode results; no additional files generated._")
-            lines.append("")
-            continue
-        lines.extend(
-            [
-                "#### Feature Set",
-                build_feature_list_table(mode_result.fs_result),
-                "",
-                "#### Overfit Flags",
-                "_SHAP vs permutation:_",
-                build_overfit_section(mode_result.fs_result.shap_overfit_features),
-                "",
-                "_Gain vs permutation:_",
-                build_overfit_section(mode_result.fs_result.gain_overfit_features),
-                "",
-                "#### Performance",
-                build_metrics_table(mode_result.models),
-                "",
-            ]
+        lines.append(
+            "See the per-mode `metrics_<mode>.json`, `features_<mode>.json`, "
+            "and corresponding SHAP/permutation files in the run directory for full details."
         )
     return "\n".join(lines)
 
@@ -461,6 +544,96 @@ def build_mode_summary_table(result: ExperimentResult, config: dict) -> str:
         f"Penalty (w={gap_weight})",
     ]
     return _markdown_table(headers, rows)
+
+
+def _load_feature_descriptions(config: dict, dataset: str) -> Dict[str, str]:
+    def _candidate_paths() -> List[Path]:
+        candidates: List[Path] = []
+        reporting_cfg = config.get("reporting", {})
+        explicit = reporting_cfg.get("feature_description_path")
+        if explicit:
+            candidates.append(Path(explicit))
+        dataset_path = config.get("dataset_path")
+        if dataset_path:
+            ds_path = Path(dataset_path)
+            if ds_path.is_file():
+                candidates.append(ds_path.parent / "variable_descriptions.csv")
+            else:
+                candidates.append(ds_path / "variable_descriptions.csv")
+        candidates.append(Path("data") / "raw" / dataset / "variable_descriptions.csv")
+        candidates.append(Path("temp") / dataset / "variable_descriptions.csv")
+        return candidates
+
+    for path in _candidate_paths():
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        lower = {col.lower(): col for col in df.columns}
+        name_col = None
+        for key in ["feature", "column", "variable", "variable name", "variable_name"]:
+            if key in lower:
+                name_col = lower[key]
+                break
+        if not name_col:
+            continue
+        desc_col = None
+        for key in ["description", "label", "details"]:
+            if key in lower:
+                desc_col = lower[key]
+                break
+        if not desc_col:
+            continue
+        mapping: Dict[str, str] = {}
+        for _, row in df[[name_col, desc_col]].iterrows():
+            feature = str(row[name_col]).strip()
+            if not feature:
+                continue
+            mapping[feature] = str(row[desc_col]).strip()
+        if mapping:
+            return mapping
+    return {}
+
+
+def _build_runtime_section(result: ExperimentResult, config: dict, total_features: int) -> str:
+    lines = ["## Runtime & Cost Comparison"]
+    fs_mode = config.get("fs_search", {}).get("mode", "profiles")
+    if fs_mode == "frontier":
+        log_path = result.run_dir / "frontier_candidates.json"
+        evaluated = duplicates = skipped = 0
+        if log_path.exists():
+            try:
+                with log_path.open("r", encoding="utf-8") as fh:
+                    entries = json.load(fh)
+                for entry in entries:
+                    if entry.get("is_duplicate"):
+                        duplicates += 1
+                    elif entry.get("skipped_due_to_limit"):
+                        skipped += 1
+                    else:
+                        evaluated += 1
+            except Exception:
+                evaluated = len(result.mode_results)
+        else:
+            evaluated = len(result.mode_results)
+        lines.append(
+            f"- Frontier sweep evaluated {evaluated} unique threshold combinations "
+            f"(duplicates skipped: {duplicates}, capped by config: {skipped})."
+        )
+        lines.append("- Wall-clock runtime depends on hardware; check the CLI log for the exact duration.")
+    else:
+        lines.append(f"- Profile loop evaluated {len(result.mode_results)} configured FS modes.")
+    lines.append(
+        f"- A classical RFE pass would require roughly {total_features} sequential model fits "
+        "plus cross-validation, typically 30× slower."
+    )
+    lines.append(
+        "- Boruta-style wrappers train shadow-augmented forests for 100+ iterations, "
+        "which is usually an order of magnitude slower than this pipeline."
+    )
+    return "\n".join(lines)
 
 
 def generate_eda_report_markdown(dataset: str, X: pd.DataFrame, y: pd.Series, metadata: dict) -> str:

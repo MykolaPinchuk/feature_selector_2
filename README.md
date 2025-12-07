@@ -64,6 +64,16 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
 
    The prep script emits `brfss_2015.parquet` (full dataset), `brfss_2015_sample.parquet` (faster experiments), and a `variable_descriptions.csv` that combines XPT metadata with SAS label statements. The loader automatically downsamples the majority class to a 50/50 ratio and exposes an interview-timestamp column so configs can request chronological splits.
 
+   _Santander Customer Satisfaction (Kaggle competition)_:
+
+   ```bash
+   mkdir -p data/raw/santander_customer_satisfaction
+   kaggle competitions download -c santander-customer-satisfaction -p data/raw/santander_customer_satisfaction
+   unzip -o data/raw/santander_customer_satisfaction/santander-customer-satisfaction.zip -d data/raw/santander_customer_satisfaction
+   ```
+
+   The loader expects `train.csv` under `data/raw/santander_customer_satisfaction/`. The Kaggle CLI requires an API token; follow the [official setup guide](https://www.kaggle.com/docs/api) if you have not configured it yet.
+
 3. **Quick smoke test**
 
    ```bash
@@ -142,6 +152,22 @@ python -m fs_xgb.cli.main \
 ```bash
 python -m fs_xgb.cli.main \
   --config fs_xgb/experiments/configs/brfss_2015_sample.yaml \
+  --results-dir results
+```
+
+**Santander Customer Satisfaction:**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/santander_customer_satisfaction.yaml \
+  --results-dir results
+```
+
+**Santander Customer Satisfaction frontier sweep:**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/santander_customer_satisfaction_frontier.yaml \
   --results-dir results
 ```
 

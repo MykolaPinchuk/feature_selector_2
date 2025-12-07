@@ -8,7 +8,8 @@ The repository has grown considerably across Iterations 1–5. To keep future ag
    - `docs/iteration_plan.md`: read the active iteration section and the next one on deck; earlier iterations can be skimmed or skipped.
    - Latest run report: open the most recent `results/<dataset>/<timestamp>/report.md` for the dataset you’re working on (e.g., the newest BRFSS run). This gives the freshest status on FS decisions, heuristics, and runtime notes without re-reading the entire PRD.
 2. **Core codepaths**
-   - `fs_xgb/pipeline.py`: focus on the orchestration functions (`run_experiment`, `_run_frontier_mode`, `_train_and_eval_models`); this is the entrypoint for most tasks.
+   - `fs_xgb/pipeline.py`: main analysis flow pipeline. This is the entrypoint for most tasks.
+   - `fs_xgb/eval/reporting.py`.
    - `fs_xgb/fs_logic/fs_pipeline.py`: only read when modifying permutation/SHAP logic; otherwise trust the existing helpers.
    - `fs_xgb/config/default_config.yaml` and any dataset-specific configs under `fs_xgb/experiments/configs/` relevant to your task.
 3. **Supporting modules**

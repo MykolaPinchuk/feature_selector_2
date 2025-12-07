@@ -1,0 +1,70 @@
+dataset: "santander_customer_satisfaction"
+dataset_path: "data/raw/santander_customer_satisfaction/train.csv"
+target: "is_unsatisfied"
+metric: "prauc"
+
+splits:
+  strategy: "random"
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+fs:
+  holdout_fraction: 0.25
+  n_fs_models: 2
+  topk_shap: 80
+  fs_eval:
+    neg_pos_ratio: 20
+  thresholds:
+    delta_abs_min: 0.0004
+    k_noise_std: 1.5
+  rest_policy: "keep_all"
+  drop_negative_features: true
+
+fs_modes:
+  aggressive:
+    thresholds:
+      delta_abs_min: 0.001
+      k_noise_std: 1.0
+    rest_policy: "drop_all"
+  moderate:
+    thresholds:
+      delta_abs_min: 0.0005
+      k_noise_std: 1.5
+    rest_policy: "keep_all"
+  mild:
+    thresholds:
+      delta_abs_min: 0.0002
+      k_noise_std: 2.5
+    rest_policy: "keep_all"
+    drop_negative_features: false
+
+fs_primary_mode: "moderate"
+
+fs_search:
+  mode: "profiles"
+
+xgb_fs_params:
+  max_depth: 6
+  min_child_weight: 12
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 1.2
+  eta: 0.12
+  n_estimators: 400
+  early_stopping_rounds: 60
+
+xgb_final_params:
+  max_depth: 7
+  min_child_weight: 18
+  subsample: 0.85
+  colsample_bytree: 0.75
+  lambda: 2.0
+  eta: 0.08
+  n_estimators: 1500
+  early_stopping_rounds: 80
+
+selection:
+  val_tolerance_relative: 0.02
+  max_final_feature_sets: 3
+  gap_penalty_weight: 0.3

@@ -1,0 +1,70 @@
+dataset: "santander_customer_satisfaction"
+dataset_path: "data/raw/santander_customer_satisfaction/train.csv"
+target: "is_unsatisfied"
+metric: "prauc"
+
+splits:
+  strategy: "random"
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+fs:
+  holdout_fraction: 0.3
+  n_fs_models: 2
+  topk_shap: 70
+  fs_eval:
+    neg_pos_ratio: 20
+  thresholds:
+    delta_abs_min: 0.0004
+    k_noise_std: 1.5
+  rest_policy: "keep_all"
+  drop_negative_features: true
+  overfit_filter:
+    enabled: true
+    max_shap_rank: 40
+    delta_max: 0.0003
+    delta_std_max: 0.0015
+    action: "drop"
+  gain_overfit_filter:
+    enabled: true
+    max_gain_rank: 40
+    delta_max: 0.0003
+    delta_std_max: 0.0015
+    action: "drop"
+
+fs_modes: {}
+fs_primary_mode: "moderate"
+
+fs_search:
+  mode: "frontier"
+  frontier:
+    delta_abs_min_values: [0.0, 0.0002, 0.0004, 0.0008, 0.0012, 0.002, 0.003]
+    k_noise_std_values: [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
+    rest_policies: ["keep_all", "drop_all", "keep_above_min_shap"]
+    drop_negative_options: [true, false]
+    max_candidates: 18
+
+xgb_fs_params:
+  max_depth: 6
+  min_child_weight: 12
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 1.2
+  eta: 0.12
+  n_estimators: 350
+  early_stopping_rounds: 50
+
+xgb_final_params:
+  max_depth: 7
+  min_child_weight: 18
+  subsample: 0.85
+  colsample_bytree: 0.75
+  lambda: 2.0
+  eta: 0.08
+  n_estimators: 1200
+  early_stopping_rounds: 70
+
+selection:
+  val_tolerance_relative: 0.015
+  gap_penalty_weight: 0.3

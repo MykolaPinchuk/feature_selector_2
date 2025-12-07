@@ -4,3 +4,4 @@
 from . import student_grades  # noqa: F401
 from . import census_income  # noqa: F401
 from . import brfss  # noqa: F401
+from . import santander  # noqa: F401

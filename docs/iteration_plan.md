@@ -38,19 +38,22 @@ This document tracks the multi-iteration plan for the Feature Selector beyond It
   - ☐ Explore additional pre-filters for FS pipeline if runtime pressure grows.
 
 
-## Iteration 5 (in progress)
+## Iteration 5 
 
 - ✅ For previously added datasets, swap the target encoder to the new `strategy="naive"` mode (no smoothing / frequency thresholding) so these columns overfit and provide a stronger signal for the FS heuristics.
 - ✅ Add BRFSS 2015 (CDC) dataset support: loader + prep script, configs (full + sample), README instructions, and EDA/reporting artifacts for the diabetes target, with downsampled 50/50 class ratio and interview-date chronological splits to avoid leakage.
 
-## Iteration 6
+## Iteration 6 
 
-- Try Santander dataset
-- For permutation FI, add stat test against <=0 null hypothesis.
+- **Santander Customer Satisfaction dataset**
+  - ✅ Add dataset loader + registry entry, configs (profiles + frontier), and README instructions.
+  - ☐ Run first full experiments + report to baseline FS heuristics.
+- **Permutation FI upgrades**
+  - ☐ Add stat test against <=0 null hypothesis to better filter noise-dominated features.
 
 ## Iteration 7 
 
-Try synthetic dataset as sugegsted by Opus.
+Try synthetic dataset as suggested by Opus.
 
 ## Iterations 8-9
 
