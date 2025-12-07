@@ -29,6 +29,7 @@ class FeatureSelectionResult:
     gain_importance: pd.Series
     shap_overfit_features: List[str] = field(default_factory=list)
     gain_overfit_features: List[str] = field(default_factory=list)
+    selection_threshold: float | None = None
 
     @property
     def overfit_features(self) -> List[str]:
@@ -171,7 +172,7 @@ def _apply_selection_rules(
     shap_importance: pd.Series,
     gain_importance: pd.Series | None,
     config: Dict,
-) -> Tuple[List[str], List[str], List[str], List[str]]:
+) -> Tuple[List[str], List[str], List[str], List[str], float]:
     thresholds = config.get("thresholds", {})
     delta_abs_min = thresholds.get("delta_abs_min", 0.0)
     k_noise_std = thresholds.get("k_noise_std", 2.0)
@@ -237,7 +238,7 @@ def _apply_selection_rules(
     if drop_overfit:
         drop = sorted(set(drop).union(drop_overfit))
         keep = [feat for feat in keep if feat not in drop_overfit]
-    return keep, drop, sorted(shap_flags), sorted(gain_flags)
+    return keep, drop, sorted(shap_flags), sorted(gain_flags), float(threshold)
 
 
 def compute_fs_artifacts(X: pd.DataFrame, y: pd.Series, config: Dict, random_state: int = 42) -> FeatureImportanceArtifacts:
@@ -294,7 +295,7 @@ def build_fs_result_from_artifacts(artifacts: FeatureImportanceArtifacts, config
     fi_table = artifacts.permutation_table.copy()
     shap_importance = artifacts.shap_importance.copy()
     gain_importance = artifacts.gain_importance.copy()
-    kept, dropped, shap_flags, gain_flags = _apply_selection_rules(
+    kept, dropped, shap_flags, gain_flags, threshold = _apply_selection_rules(
         fi_table,
         shap_importance,
         gain_importance,
@@ -311,6 +312,7 @@ def build_fs_result_from_artifacts(artifacts: FeatureImportanceArtifacts, config
         gain_importance=gain_importance,
         shap_overfit_features=shap_flags,
         gain_overfit_features=gain_flags,
+        selection_threshold=threshold,
     )
 
 

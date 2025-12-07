@@ -25,11 +25,17 @@ This document tracks the multi-iteration plan for the Feature Selector beyond It
 - **Tests:** Unit tests for the detector plus an integration smoke test that validates at least one feature is filtered when the heuristic criteria are met.
 
 
-## Iteration 4
+## Iteration 4 (in progress)
 
-- Onboard Census dataset. Be carefull with running time since it is 50 times larger than the student grades dataset.
-- Add correlation anlysis to EDA.
-- Explore whether to add pre-filters to FS pipeline.
+- **Onboard Census Income (KDD) dataset**
+  - ✅ Add dataset loader + registry entry with `is_high_income` target (≈6% positives).
+  - ✅ Provide CLI configs (`census_income*.yaml`) tuned for faster FS models and document download steps.
+  - ✅ Produce balanced (1:1) subsample via `scripts/create_census_balanced_sample.py` and focus Iterations 4–5 on this downsample for faster iteration.
+  - ✅ Enforce chronological splits so TRAIN uses 1994 rows while VAL/TEST begin at 1995 (OOT evaluation).
+  - ☐ Run first full experiments + reports on the full dataset once the balanced workflow stabilizes.
+- **EDA upgrades**
+  - ✅ Extend `eda.md` with correlation analysis for numeric features + target lift.
+  - ☐ Explore additional pre-filters for FS pipeline if runtime pressure grows.
 
 
 ## Iterations 5+

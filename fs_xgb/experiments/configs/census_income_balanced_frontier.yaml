@@ -1,0 +1,75 @@
+dataset: "census_income"
+dataset_path: "data/raw/census_income_kdd_balanced"
+target: "is_high_income"
+metric: "prauc"
+
+splits:
+  strategy: "chronological"
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+
+feature_engineering:
+  target_encoding:
+    n_splits: 5
+    smoothing: 20.0
+    min_category_size: 80
+
+fs:
+  holdout_fraction: 0.25
+  n_fs_models: 2
+  topk_shap: 35
+  fs_eval:
+    neg_pos_ratio: 5
+  thresholds:
+    delta_abs_min: 0.0005
+    k_noise_std: 1.5
+  rest_policy: "keep_all"
+  drop_negative_features: true
+  overfit_filter:
+    enabled: true
+    max_shap_rank: 40
+    delta_max: 0.0005
+    delta_std_max: 0.002
+    action: "drop"
+  gain_overfit_filter:
+    enabled: true
+    max_gain_rank: 40
+    delta_max: 0.0005
+    delta_std_max: 0.002
+    action: "drop"
+
+fs_modes: {}
+fs_primary_mode: "moderate"
+
+fs_search:
+  mode: "frontier"
+  frontier:
+    delta_abs_min_values: [0.0, 0.0005, 0.001, 0.002, 0.003, 0.004]
+    k_noise_std_values: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    rest_policies: ["keep_all", "drop_all", "keep_above_min_shap"]
+    drop_negative_options: [true, false]
+    max_candidates: 20
+
+xgb_fs_params:
+  max_depth: 6
+  min_child_weight: 12
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 1.5
+  eta: 0.12
+  n_estimators: 300
+  early_stopping_rounds: 50
+
+xgb_final_params:
+  max_depth: 6
+  min_child_weight: 15
+  subsample: 0.8
+  colsample_bytree: 0.8
+  lambda: 2.0
+  eta: 0.08
+  n_estimators: 800
+  early_stopping_rounds: 50
+
+selection:
+  val_tolerance_relative: 0.02

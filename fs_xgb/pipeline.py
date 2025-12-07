@@ -25,7 +25,12 @@ from fs_xgb.fs_logic import (
 from fs_xgb.metrics import compute_classification_metrics
 from fs_xgb.models import predict_proba, train_xgb_classifier
 from fs_xgb.preprocessing import FeatureEngineer, FeatureEngineerConfig, TargetEncodingConfig
-from fs_xgb.splitting import RandomSplitConfig, create_random_splits
+from fs_xgb.splitting import (
+    RandomSplitConfig,
+    ChronoSplitConfig,
+    create_random_splits,
+    create_chronological_splits,
+)
 from fs_xgb.types import ExperimentResult, ModeResult, ModelResult
 
 
@@ -400,12 +405,25 @@ def run_experiment(config_path: Optional[Path], results_root: Path = Path("resul
     write_eda_report(dataset_name, X, y, metadata, results_root)
 
     splits_cfg = config.get("splits", {})
-    split_config = RandomSplitConfig(
-        test_size=splits_cfg.get("test_size", 0.2),
-        val_size=splits_cfg.get("val_size", 0.2),
-        random_state=splits_cfg.get("random_state", 42),
-    )
-    splits = create_random_splits(X, y, split_config)
+    split_strategy = splits_cfg.get("strategy", "random")
+    if split_strategy == "chronological":
+        timestamp_col = metadata.get("timestamp_column")
+        if not timestamp_col:
+            raise ValueError("Chronological split requested but dataset metadata lacks 'timestamp_column'.")
+        split_config = ChronoSplitConfig(
+            test_size=splits_cfg.get("test_size", 0.2),
+            val_size=splits_cfg.get("val_size", 0.2),
+            timestamp_column=timestamp_col,
+            random_state=splits_cfg.get("random_state", 42),
+        )
+        splits = create_chronological_splits(X, y, split_config)
+    else:
+        split_config = RandomSplitConfig(
+            test_size=splits_cfg.get("test_size", 0.2),
+            val_size=splits_cfg.get("val_size", 0.2),
+            random_state=splits_cfg.get("random_state", 42),
+        )
+        splits = create_random_splits(X, y, split_config)
 
     feature_engineer = _prepare_feature_engineer(config)
     X_train = feature_engineer.fit_transform(splits.X_train, splits.y_train)

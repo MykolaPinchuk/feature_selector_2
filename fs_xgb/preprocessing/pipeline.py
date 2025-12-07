@@ -28,6 +28,7 @@ class FeatureEngineer:
         self.binary_encoders: Dict[str, BinaryCategoryEncoder] = {}
         self.target_encoders: Dict[str, TargetEncoder] = {}
         self.categorical_columns: List[str] = []
+        self.constant_fills: Dict[str, float] = {}
 
     def _select_categorical_columns(self, df: pd.DataFrame) -> List[str]:
         if self.config.categorical_columns is not None:
@@ -45,9 +46,12 @@ class FeatureEngineer:
             unique_values = X[col].dropna().unique()
             n_unique = len(unique_values)
             if n_unique == 0:
-                X_transformed[col] = self.config.binary_missing_value
+                fill_value = self.config.binary_missing_value
+                X_transformed[col] = fill_value
+                self.constant_fills[col] = fill_value
             elif n_unique == 1:
                 X_transformed[col] = 0.0
+                self.constant_fills[col] = 0.0
             elif n_unique == 2:
                 encoder = BinaryCategoryEncoder(missing_value=self.config.binary_missing_value)
                 X_transformed[col] = encoder.fit_transform(X[col], y)
@@ -64,4 +68,7 @@ class FeatureEngineer:
             X_transformed[col] = encoder.transform(X[col])
         for col, encoder in self.target_encoders.items():
             X_transformed[col] = encoder.transform(X[col])
+        for col, fill_value in self.constant_fills.items():
+            if col in X_transformed.columns:
+                X_transformed[col] = fill_value
         return X_transformed

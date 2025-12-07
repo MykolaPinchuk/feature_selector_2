@@ -50,8 +50,8 @@ fs_modes:
     drop_negative_features: true
   mild:
     thresholds:
-      delta_abs_min: 0.0005
-      k_noise_std: 2.5
+      delta_abs_min: 0.0
+      k_noise_std: 0.5
     rest_policy: "keep_all"
     drop_negative_features: false
 

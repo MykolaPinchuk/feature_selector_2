@@ -10,9 +10,9 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
    pip install -e .
    ```
 
-2. **Download the student grades dataset**
+2. **Download datasets**
 
-   The Kaggle dataset is mirrored on GitHub, which allows automated downloads without credentials. Run:
+   _Student grades (Factors Affecting University Student Grades)_:
 
    ```bash
    mkdir -p data/raw
@@ -22,6 +22,27 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
 
    The loader expects the CSV at `data/raw/factors_affecting_university_student_grades.csv`. Adjust the path via `fs_xgb.data.load_dataset(..., data_path=Path(...))` if you store it elsewhere.
 
+   _Census Income (KDD)_:
+
+   ```bash
+   mkdir -p data/raw/census_income_kdd
+   curl -L -o data/raw/census_income_kdd.zip \
+     https://archive.ics.uci.edu/static/public/117/census%2Bincome%2Bkdd.zip
+   unzip -o data/raw/census_income_kdd.zip -d data/raw/census_income_kdd
+   tar -xzf data/raw/census_income_kdd/census.tar.gz -C data/raw/census_income_kdd
+   ```
+
+   The loader looks for `census-income.data` and `census-income.test` under `data/raw/census_income_kdd/`. Feel free to point the loader to another directory via the `data_path` argument.
+
+   _Balanced subsample (1:1 class ratio, used for Iterations 4–5)_:
+
+   ```bash
+   python scripts/create_census_balanced_sample.py \
+     --source data/raw/census_income_kdd \
+     --output data/raw/census_income_kdd_balanced
+   ```
+
+   All Census configs set `splits.strategy: "chronological"`, which means TRAIN consumes the earliest year (1994) and VAL/TEST begin with 1995 to enforce out-of-time evaluation.
 3. **Quick smoke test**
 
    ```bash
@@ -67,6 +88,22 @@ python -m fs_xgb.cli.main \
   --results-dir results
 ```
 
+**Census Income profile loop:**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/census_income.yaml \
+  --results-dir results
+```
+
+**Census Income balanced subsample:**
+
+```bash
+python -m fs_xgb.cli.main \
+  --config fs_xgb/experiments/configs/census_income_balanced.yaml \
+  --results-dir results
+```
+
 **Frontier sweep (reuse SHAP/permutation pass across many threshold combos):**
 
 ```bash
@@ -75,12 +112,14 @@ python -m fs_xgb.cli.main \
   --results-dir results
 ```
 
+Swap `student_grades_frontier.yaml` with `census_income_frontier.yaml` (full dataset) or `census_income_balanced_frontier.yaml` (balanced subset) to run the comprehensive search on Census Income.
+
 After the run completes you can inspect:
 
 - `metrics.json`: PR-AUC/ROC-AUC on train/val/test for each model variant plus which one satisfied the tolerance criterion for the **primary** FS mode (default: moderate).
 - `metrics_aggressive.json` / `metrics_mild.json`: Additional summaries for the alternate FS modes.
 - `permutation_fi*.csv`, `shap_importance*.csv`, `features*.json`: Mode-specific feature-importance outputs.
-- `report.md`: Human-readable Markdown summary that focuses on the primary mode and also lists feature sets + performance for the alternate modes.
+- `report.md`: Human-readable summary covering the primary mode, alternate modes, and a comprehensive feature table listing every column’s permutation/SHAP/gain metrics, threshold gaps, and inclusion status.
 - `config.yaml`: The resolved configuration (defaults + overrides) used for the run.
 
 A dataset-specific EDA summary is written (or refreshed) at `results/<dataset>/eda.md`, covering target distribution, per-column missingness, and numeric stats. This lets you review the dataset once and keep it alongside experiment outputs.

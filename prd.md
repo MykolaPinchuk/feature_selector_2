@@ -84,6 +84,11 @@ We need a framework that:
 
 ## 4. Data Model and Assumptions
 
+Active public datasets currently supported:
+
+- **Factors Affecting University Student Grades** – binary `is_high_grade` target where Grade == "A".
+- **Census Income (KDD)** – binary `is_high_income` target (`income >= $50K`), ~6% positives, ~300k deduplicated rows; used to validate runtime scaling.
+
 ### 4.1 Task
 
 - **Binary classification**:
@@ -115,6 +120,7 @@ Inner FS-specific split inside TRAIN (when time dimension available):
 If no time dimension:
 
 - Use stratified random splits to define TRAIN/VAL/TEST and TRAIN_FS/HOLDOUT_FS.
+- If a dataset exposes a timestamp column (e.g., Census Income’s `year`), enforce chronological splits so TRAIN consumes the earliest timestamps and subsequent splits only contain later timestamps.
 
 ---
 
@@ -622,6 +628,4 @@ For each experiment:
   * Micro/macro PR-AUC and class-conditional FS.
 * Support for non-XGB models (LightGBM, CatBoost).
 * Automated hyperparameter tuning integrated with FS.
-
-
 

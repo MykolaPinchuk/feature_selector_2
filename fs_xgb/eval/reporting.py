@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 import pandas as pd
+import math
 
 from fs_xgb.fs_logic import FeatureSelectionResult
 from fs_xgb.types import ExperimentResult, ModeResult, ModelResult
@@ -24,6 +25,69 @@ def _format_float(value: float, decimals: int = 4) -> str:
     if value != value:  # NaN check
         return "nan"
     return f"{value:.{decimals}f}"
+
+
+def _build_top_feature_correlations(numeric_df: pd.DataFrame, top_n: int = 10) -> List[List[str]]:
+    corr_matrix = numeric_df.corr()
+    pairs: List[tuple] = []
+    columns = list(corr_matrix.columns)
+    for i, col_a in enumerate(columns):
+        for j in range(i + 1, len(columns)):
+            col_b = columns[j]
+            value = corr_matrix.iloc[i, j]
+            if pd.isna(value):
+                continue
+            pairs.append((col_a, col_b, value))
+    pairs.sort(key=lambda item: abs(item[2]), reverse=True)
+    top_pairs = pairs[:top_n]
+    return [[a, b, _format_float(abs(val))] for a, b, val in top_pairs]
+
+
+def build_correlation_section(X: pd.DataFrame, y: pd.Series, top_n: int = 10) -> str:
+    numeric_df = X.select_dtypes(include="number")
+    lines = ["## Correlation Analysis"]
+    if numeric_df.empty:
+        lines.append("_No numeric features available for correlation analysis._")
+        return "\n".join(lines)
+
+    # Feature vs target correlations
+    target_series = y.reset_index(drop=True).astype(float)
+    corr_with_target = (
+        numeric_df.assign(__target__=target_series)
+        .corr()
+        .loc[:, "__target__"]
+        .drop("__target__", errors="ignore")
+    )
+    corr_with_target = corr_with_target.dropna()
+    if not corr_with_target.empty:
+        sorted_features = corr_with_target.abs().sort_values(ascending=False).index
+        rows = [
+            [feature, _format_float(corr_with_target[feature])]
+            for feature in sorted_features[:top_n]
+        ]
+        target_table = _markdown_table(["Feature", "Correlation"], rows)
+    else:
+        target_table = "_Not enough numeric-target overlap for correlation._"
+
+    # Feature-feature correlations
+    pair_rows = _build_top_feature_correlations(numeric_df, top_n)
+    if pair_rows:
+        feature_table = _markdown_table(
+            ["Feature A", "Feature B", "|corr|"], pair_rows
+        )
+    else:
+        feature_table = "_Not enough numeric features for pairwise correlation._"
+
+    lines.extend(
+        [
+            "### Numeric Features vs Target",
+            target_table,
+            "",
+            "### Top Numeric Feature Pairs (absolute correlation)",
+            feature_table,
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_metrics_table(models: List[ModelResult]) -> str:
@@ -83,6 +147,68 @@ def build_top_tables(fs_result: FeatureSelectionResult, top_n: int = 15) -> str:
     return f"### Top Permutation FI (ΔPR-AUC)\n\n{perm_table}\n\n### Top SHAP Importance\n\n{shap_table}"
 
 
+def build_feature_details_table(fs_result: FeatureSelectionResult) -> str:
+    """Build a comprehensive table listing FI metrics for all features."""
+
+    perm_table = fs_result.permutation_table.set_index("feature")
+    shap_series = fs_result.shap_importance
+    gain_series = fs_result.gain_importance
+    shap_flags = set(fs_result.shap_overfit_features)
+    gain_flags = set(fs_result.gain_overfit_features)
+    threshold = fs_result.selection_threshold
+
+    def _fmt(value: float | str | None) -> str:
+        if isinstance(value, str):
+            return value
+        if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+            return "n/a"
+        return _format_float(value)
+
+    rows = []
+    for feature in shap_series.index:
+        permuted = feature in perm_table.index
+        delta_mean = float(perm_table.at[feature, "delta_mean"]) if permuted else float("nan")
+        delta_std = float(perm_table.at[feature, "delta_std"]) if permuted else float("nan")
+        shap_val = float(shap_series.get(feature, float("nan")))
+        gain_val = float(gain_series.get(feature, float("nan")))
+        kept = feature in fs_result.kept_features
+        gap = None
+        if threshold is not None and permuted and not math.isnan(delta_mean):
+            gap = delta_mean - threshold
+        overfit_labels = []
+        if feature in shap_flags:
+            overfit_labels.append("SHAP")
+        if feature in gain_flags:
+            overfit_labels.append("Gain")
+        overfit_text = ", ".join(overfit_labels) if overfit_labels else "-"
+        rows.append(
+            [
+                feature,
+                "yes" if kept else "no",
+                "yes" if permuted else "no",
+                _fmt(delta_mean),
+                _fmt(delta_std),
+                _fmt(gap),
+                _fmt(shap_val),
+                _fmt(gain_val),
+                overfit_text,
+            ]
+        )
+
+    headers = [
+        "Feature",
+        "Included",
+        "Permuted",
+        "ΔPR-AUC (mean)",
+        "ΔPR-AUC (std)",
+        "Δ - threshold",
+        "Mean abs(SHAP)",
+        "Mean gain",
+        "Overfit flag",
+    ]
+    return _markdown_table(headers, rows)
+
+
 def generate_experiment_report_markdown(result: ExperimentResult, config: dict) -> str:
     dataset = result.dataset
     timestamp = result.run_dir.name
@@ -115,6 +241,9 @@ def generate_experiment_report_markdown(result: ExperimentResult, config: dict) 
         build_overfit_section(primary.fs_result.gain_overfit_features),
         "",
         build_top_tables(primary.fs_result),
+        "",
+        "## Full Feature Table",
+        build_feature_details_table(primary.fs_result),
     ]
 
     other_modes = [name for name in result.mode_results.keys() if name != primary_mode]
@@ -279,19 +408,30 @@ def generate_eda_report_markdown(dataset: str, X: pd.DataFrame, y: pd.Series, me
     else:
         numeric_section = ["## Numeric Feature Stats", "_No numeric features available._"]
 
+    correlation_section = build_correlation_section(X, y)
+
     lines = [
         f"# EDA Report – {dataset}",
         f"- Total rows: {total_rows}",
         f"- Source: {metadata.get('source_url', 'N/A')}",
-        "",
-        "## Target Distribution",
-        class_table,
-        "",
-        "## Feature Summary",
-        summary_table,
-        "",
-        *numeric_section,
     ]
+    target_definition = metadata.get("target_definition")
+    if target_definition:
+        lines.append(f"- Target: {target_definition}")
+    lines.extend(
+        [
+            "",
+            "## Target Distribution",
+            class_table,
+            "",
+            "## Feature Summary",
+            summary_table,
+            "",
+            *numeric_section,
+            "",
+            correlation_section,
+        ]
+    )
     return "\n".join(lines)
 
 

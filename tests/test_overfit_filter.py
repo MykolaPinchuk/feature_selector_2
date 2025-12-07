@@ -56,7 +56,7 @@ def test_apply_selection_rules_drops_overfit_features():
             "action": "drop",
         },
     }
-    keep, drop, shap_flags, gain_flags = _apply_selection_rules(
+    keep, drop, shap_flags, gain_flags, threshold = _apply_selection_rules(
         fi_table, shap_importance, gain_importance, config
     )
     assert keep == ["a"]
@@ -82,7 +82,7 @@ def test_apply_selection_rules_demote_pushes_feature_into_rest_pool():
             "action": "demote",
         },
     }
-    keep, drop, shap_flags, gain_flags = _apply_selection_rules(
+    keep, drop, shap_flags, gain_flags, threshold = _apply_selection_rules(
         fi_table, shap_importance, gain_importance, config
     )
     # Feature "b" initially qualifies via permutation but is demoted. Since the
