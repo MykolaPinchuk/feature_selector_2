@@ -62,7 +62,7 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
      --sample-rows 60000
    ```
 
-   The prep script emits `brfss_2015.parquet` (full dataset), `brfss_2015_sample.parquet` (faster experiments), and a `variable_descriptions.csv` that combines XPT metadata with SAS label statements.
+   The prep script emits `brfss_2015.parquet` (full dataset), `brfss_2015_sample.parquet` (faster experiments), and a `variable_descriptions.csv` that combines XPT metadata with SAS label statements. The loader automatically downsamples the majority class to a 50/50 ratio and exposes an interview-timestamp column so configs can request chronological splits.
 
 3. **Quick smoke test**
 
@@ -96,6 +96,8 @@ This repository hosts a reusable Python codebase for permutation- and SHAP-based
   - A minimum category frequency threshold to default rare categories back to the global prior.
 
   Set `TargetEncodingConfig.strategy` to `"naive"` to disable smoothing and frequency thresholds, which intentionally overfits high-cardinality columns so the FS pipeline can stress-test its ability to drop them. Keeping the default `"smoothed"` mode preserves the original regularized behavior.
+
+  Regardless of strategy, the encoder uses out-of-fold averages during `fit_transform`, so validation rows never see their own labels—this prevents leakage even when naive encoding is requested.
 
 All encoders live under `fs_xgb.preprocessing` and can be composed via `FeatureEngineer` for TRAIN/VAL/TEST splits.
 

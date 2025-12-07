@@ -35,6 +35,9 @@ MISSING_CODES = {float(code) for code in MISSING_CODE_BASE}
 LOW_CARDINALITY_MAX_UNIQUE = 15
 HIGH_MISSING_THRESHOLD = 0.98
 DROP_COLUMNS = {"SEQNO"}
+LEAKY_SUBSTRINGS = ("DIAB", "INSUL", "PREDIAB")
+TIMESTAMP_COLUMN = "interview_timestamp"
+RANDOM_STATE = 42
 
 
 def _extract_xpt_from_zip(zip_path: Path) -> Path:
@@ -104,6 +107,18 @@ def _replace_missing_codes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _drop_leaky_columns(df: pd.DataFrame) -> pd.DataFrame:
+    upper = {col: col.upper() for col in df.columns}
+    to_drop = [
+        col
+        for col, upper_name in upper.items()
+        if col != TARGET_COLUMN and any(token in upper_name for token in LEAKY_SUBSTRINGS)
+    ]
+    if to_drop:
+        df = df.drop(columns=to_drop)
+    return df
+
+
 def _is_integral(series: pd.Series) -> bool:
     values = series.to_numpy()
     if values.size == 0:
@@ -128,6 +143,48 @@ def _convert_low_cardinality(df: pd.DataFrame) -> pd.DataFrame:
                 categorical = categorical.add_categories(["__MISSING__"])
             df[col] = categorical
     return df
+
+
+def _build_timestamp_features(df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+    if "IDATE" in df.columns:
+        date_series = pd.to_datetime(df["IDATE"], format="%m%d%Y", errors="coerce")
+    else:
+        date_series = pd.Series(pd.NaT, index=df.index)
+
+    missing_mask = date_series.isna()
+    if missing_mask.any():
+        month = pd.to_numeric(df.get("IMONTH"), errors="coerce").astype("Int64")
+        day = pd.to_numeric(df.get("IDAY"), errors="coerce").astype("Int64")
+        year = pd.to_numeric(df.get("IYEAR"), errors="coerce").astype("Int64")
+        fallback = pd.to_datetime(
+            month.astype(str).str.zfill(2)
+            + day.astype(str).str.zfill(2)
+            + year.astype(str),
+            format="%m%d%Y",
+            errors="coerce",
+        )
+        date_series = date_series.fillna(fallback)
+    else:
+        fallback = None
+
+    min_date = date_series.min()
+    if pd.isna(min_date):
+        min_date = pd.Timestamp("2015-01-01")
+    date_series = date_series.fillna(min_date)
+    timestamp = (date_series.astype("int64") // 86_400_000_000_000).astype("Int64")
+    return date_series, timestamp
+
+
+def _downsample_majority(X: pd.DataFrame, y: pd.Series) -> Tuple[pd.DataFrame, pd.Series]:
+    positives = y[y == 1].index
+    negatives = y[y == 0].index
+    if len(negatives) <= len(positives):
+        return X.reset_index(drop=True), y.reset_index(drop=True)
+    rng = np.random.default_rng(RANDOM_STATE)
+    sampled_neg = rng.choice(negatives.to_numpy(), size=len(positives), replace=False)
+    keep_idx = np.concatenate([positives.to_numpy(), sampled_neg])
+    keep_idx.sort()
+    return X.loc[keep_idx].reset_index(drop=True), y.loc[keep_idx].reset_index(drop=True)
 
 
 def _drop_high_missing(df: pd.DataFrame) -> pd.DataFrame:
@@ -155,15 +212,23 @@ def load_brfss_2015(data_path: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.
     for column in DROP_COLUMNS.intersection(df.columns):
         df = df.drop(columns=column)
 
+    df = _drop_leaky_columns(df)
+
+    _, interview_ts = _build_timestamp_features(df)
+    df[TIMESTAMP_COLUMN] = interview_ts
+
     target_series = df[TARGET_COLUMN]
     valid_mask = target_series.isin(TARGET_MAPPING.keys())
     df = df.loc[valid_mask].reset_index(drop=True)
-    y = target_series.loc[valid_mask].map(TARGET_MAPPING).astype(int)
+    y = target_series.loc[valid_mask].map(TARGET_MAPPING).astype(int).reset_index(drop=True)
 
     X = df.drop(columns=[TARGET_COLUMN])
     X = _replace_missing_codes(X)
     X = _drop_high_missing(X)
     X = _convert_low_cardinality(X)
+    X[TIMESTAMP_COLUMN] = X[TIMESTAMP_COLUMN].astype("float64")
+
+    X, y = _downsample_majority(X, y)
 
     metadata = {
         "task": "binary_classification",
@@ -173,6 +238,7 @@ def load_brfss_2015(data_path: Optional[Path] = None) -> Tuple[pd.DataFrame, pd.
         "positive_rate": f"{y.mean():.4f}",
         "source_url": SOURCE_URL,
         "description": "CDC Behavioral Risk Factor Surveillance System (2015) with 330 health & lifestyle variables.",
+        "timestamp_column": TIMESTAMP_COLUMN,
     }
 
     return X, y, metadata
